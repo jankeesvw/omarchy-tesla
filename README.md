@@ -167,10 +167,11 @@ should.
 
 ## What it shows
 
-**In the bar**, the mark, dimmed while the car is asleep. No colour and no
-numbers: a coloured glyph among monochrome ones is a permanent small
-distraction, and a car being driven is news you go and look for rather than
-news that should be shouted at you.
+**In the bar**, the mark and nothing else. It turns green while the car is
+moving, sits plain while it is parked and awake, and dims while it sleeps.
+Three states, no numbers: a bar full of coloured glyphs is a bar you stop
+reading, so the colour is saved for the one thing worth catching out of the
+corner of your eye.
 
 **In the panel**, top to bottom:
 

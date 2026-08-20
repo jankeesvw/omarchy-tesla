@@ -44,8 +44,8 @@ Panel {
   // no green. This is the one place a literal colour is right: a live
   // indicator is green everywhere, in every theme, and one that drifted to
   // whatever the accent happened to be would stop reading as "it is up" and
-  // start reading as decoration. It is used on the panel's status dot only,
-  // the bar stays monochrome.
+  // start reading as decoration. It marks the panel's status dot and the bar
+  // mark while the car is moving, and nothing else.
   readonly property color liveGreen: "#4caf50"
 
   // ----------------------------------------------------------------- settings
@@ -451,14 +451,20 @@ Panel {
     iconComponent: Component {
       TeslaMark {
         iconSize: Style.bar.iconFont
-        color: button.foreground
+        color: button.active && button.useActiveColor ? button.activeColor : button.foreground
       }
     }
 
-    // No colour, ever. A coloured glyph in a bar full of monochrome ones is
-    // a permanent small distraction, and a car being driven is not news you
-    // need shouted at you. It is news you go and look for. Asleep dims, and
-    // that is the whole vocabulary.
+    // Three states and no more: green while the car is moving, plain while it
+    // is parked and awake, dimmed while it sleeps. The mark is monochrome the
+    // rest of the time on purpose, because a bar full of coloured glyphs is a
+    // bar you stop reading.
+    active: root.driving
+    // Green rather than the shell's urgent red, which is what WidgetButton
+    // reaches for by default. A car being driven is the ordinary use of a car,
+    // not an alarm, and this is the same green as the panel's live dot so the
+    // two agree about what it means.
+    activeColor: root.liveGreen
     dimmed: root.asleep || root.errorText !== ""
     tooltipText: {
       if (root.errorText !== "") return "Dude, where's my car? " + root.errorText
