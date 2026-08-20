@@ -1,0 +1,7 @@
+# Nothing that identifies a car, an account or a place belongs in this tree.
+# The token and the development fixture both live in ~/.config/omarchy-tesla/,
+# well outside it, but a stray copy is an easy thing to make and a hard thing
+# to take back out of a public history.
+fixture.json
+*token*
+*.local.*

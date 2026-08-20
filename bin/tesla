@@ -1,0 +1,796 @@
+#!/usr/bin/env bash
+# tesla: read one Tesla, for the bar widget to call.
+#
+# Everything that talks to Tesla is here, so the QML never holds a credential
+# and never decides on its own to touch the car.
+#
+# The one rule this script exists to enforce: a parked car must be allowed to
+# fall asleep. Tesla's API has two very different kinds of call.
+#
+#   Free. Answered from Tesla's own servers, the car is not involved:
+#     GET /api/1/products            the list, with each vehicle's state
+#     GET /api/1/vehicles/{id}       the same summary for one vehicle
+#   These report online / asleep / offline and never wake anything.
+#
+#   Not free. Answered by the car:
+#     GET /api/1/vehicles/{id}/vehicle_data
+#   On a sleeping car this returns 408 and does *not* wake it. On a car that
+#   is awake it resets the sleep timer, and a car whose sleep timer is reset
+#   every minute never sleeps. That is the vampire drain third-party apps are
+#   famous for, and it is why `car` refuses to ask a parked car more than once
+#   per --park-throttle no matter how often it is called.
+#
+#     POST /api/1/vehicles/{id}/wake_up
+#   The only call that actually wakes a sleeping car. It runs from the `wake`
+#   command and from nowhere else, so waking is always something a person did.
+#
+# A driving car is exempt from the throttle: it is wide awake regardless of us,
+# and a moving car is the one case where a stale position is the wrong answer.
+
+set -uo pipefail
+
+readonly OWNER_API="https://owner-api.teslamotors.com/api/1"
+readonly AUTH="https://auth.tesla.com/oauth2/v3"
+readonly CLIENT_ID="ownerapi"
+# Tesla took https://auth.tesla.com/void/callback off the allowlist for
+# client_id=ownerapi; the authorize call now 403s before the login form is even
+# drawn. The app's own scheme is still accepted, at the cost of a browser that
+# will not follow it, which is what makes `token` the pleasanter way in.
+readonly REDIRECT="tesla://auth/callback"
+readonly SCOPE="openid email offline_access"
+
+# Tesla serves the owner API only to something that looks like its own app, and
+# its login host is fussier still: auth.tesla.com sits behind a WAF that returns
+# an Access Denied page, HTML rather than JSON, to a user agent naming a tool
+# it does not recognise. Both hosts get these headers.
+readonly APP_UA="Mozilla/5.0 (Linux; Android 10; Pixel 3) AppleWebKit/537.36 (KHTML, like Gecko) Version/4.0 Chrome/120.0 Mobile Safari/537.36"
+readonly APP_TAG="TeslaApp/4.30.6"
+
+# Tiles and geocoding are somebody else's servers being generous, and both ask
+# for a user agent that says who is calling and where to complain. Only those
+# two get it; Tesla is told nothing but that this looks like a phone.
+readonly MAP_UA="omarchy-tesla/1.0 (+https://github.com/jankeesvw/omarchy-tesla)"
+
+# Force TLS 1.3 when asking for a token, and read this before removing it.
+#
+# Tesla's auth edge looks at the TLS handshake of the token request and records
+# what it saw, encrypted, in an `x-enc` claim inside the token it hands back.
+# The owner API opens that claim and refuses anything minted over TLS 1.2:
+#
+#   403 {"error":"forbidden, see https://developer.tesla.com/docs/fleet-api"}
+#
+# The token is otherwise perfect. Right audience, right scopes, unexpired, and
+# it decodes to claims byte-identical to a working one except for `x-enc`. The
+# error naming the Fleet API makes this look for all the world like the owner
+# API has been retired, which is exactly the wrong conclusion: the same request
+# with this flag returns 200.
+#
+# Only the token calls need it. Requests to the API itself are fine over
+# whatever curl negotiates, because by then the decision has already been made.
+readonly TLS_PIN="--tlsv1.3"
+
+CONFIG_DIR="${OMARCHY_TESLA_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-tesla}"
+CACHE_DIR="${OMARCHY_TESLA_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-tesla}"
+
+# Seconds a parked, awake car is left alone between readings. Tesla needs
+# roughly a quarter of an hour of quiet before it sleeps, so anything shorter
+# than this would hold it awake forever.
+PARK_THROTTLE=900
+# Seconds between readings while the car is moving. It is not going to sleep
+# mid-drive, so this is only about not hammering the API.
+DRIVE_THROTTLE=10
+# Seconds between readings while it is charging. Charging holds a car awake by
+# itself, so reading it costs nothing it was not already spending, and the
+# percentage is the one number worth watching climb.
+CHARGE_THROTTLE=60
+VIN=""
+TILE_URL="https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+FORCE=0
+
+die() { printf 'tesla: %s\n' "$*" >&2; exit 1; }
+
+# Every failure the widget might see comes back as JSON, so the panel can say
+# what went wrong instead of going blank on a parse error.
+fail_json() {
+  local error="${1:-not signed in}"
+  jq -cn --arg error "$error" --arg hint "${2-}" '{ok: false, error: $error, hint: $hint}'
+  exit 0
+}
+
+need() { command -v "$1" >/dev/null 2>&1 || die "$1 is required but not installed"; }
+
+need curl
+need jq
+need awk
+need openssl
+
+mkdir -p "$CONFIG_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places"
+
+now() { date +%s; }
+
+# ------------------------------------------------------------------- fixture
+
+# A canned reading, for working on the panel without waiting for the car to do
+# something interesting. Drop a reading in $CONFIG_DIR/fixture.json and `state`
+# and `car` serve that instead of asking Tesla anything at all; delete it and
+# both go back to the real car. A file rather than an environment variable
+# because the shell this feeds is already running, and a variable exported into
+# a terminal never reaches it.
+#
+# The timestamp is restamped on every call, so the panel's "fetched ... ago"
+# reads "just now" rather than counting up from whenever the file was written.
+fixture_path() { printf '%s' "$CONFIG_DIR/fixture.json"; }
+
+has_fixture() { [ -s "$(fixture_path)" ]; }
+
+serve_fixture() {
+  jq -c --arg at "$(now)" '. + {at: ($at|tonumber), fixture: true}' "$(fixture_path)"
+}
+
+# ------------------------------------------------------------------- secrets
+
+# Written with the same permissions every time, because these files are the
+# whole of the security here: a refresh token is the account until it is
+# revoked.
+write_private() {
+  local path="$1"
+  ( umask 077; cat > "$path" )
+}
+
+read_first_line() {
+  [ -r "$1" ] || return 1
+  local line
+  line=$(head -n1 "$1" | tr -d '\r\n')
+  [ -n "$line" ] || return 1
+  printf '%s' "$line"
+}
+
+# The refresh token is the credential worth having: it survives, and access
+# tokens are minted from it as needed. An access token on its own is accepted
+# too, so a token pasted in by hand works until it expires.
+refresh_token() {
+  if [ -n "${TESLA_REFRESH_TOKEN:-}" ]; then printf '%s' "$TESLA_REFRESH_TOKEN"; return 0; fi
+  read_first_line "$CONFIG_DIR/refresh-token"
+}
+
+# Refreshes when there is less than a minute left rather than at the moment of
+# expiry: a request that starts valid can still arrive expired.
+access_token() {
+  if [ -n "${TESLA_ACCESS_TOKEN:-}" ]; then printf '%s' "$TESLA_ACCESS_TOKEN"; return 0; fi
+
+  local token expires
+  token=$(read_first_line "$CONFIG_DIR/access-token" 2>/dev/null) || token=""
+  expires=$(read_first_line "$CONFIG_DIR/access-token-expires" 2>/dev/null) || expires=0
+
+  if [ -n "$token" ] && [ "$expires" -gt "$(( $(now) + 60 ))" ] 2>/dev/null; then
+    printf '%s' "$token"; return 0
+  fi
+
+  local refresh
+  refresh=$(refresh_token) || return 1
+  mint_access_token "$refresh"
+}
+
+# Trades the refresh token for a fresh access token and files both, because
+# Tesla rotates the refresh token on some responses and dropping the new one
+# means the next refresh fails.
+mint_access_token() {
+  local refresh="$1" body response token expires_in new_refresh
+
+  body=$(jq -cn --arg id "$CLIENT_ID" --arg rt "$refresh" --arg scope "$SCOPE" \
+    '{grant_type: "refresh_token", client_id: $id, refresh_token: $rt, scope: $scope}')
+
+  response=$(curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
+    -H "Content-Type: application/json" \
+    -H "User-Agent: $APP_UA" -H "X-Tesla-User-Agent: $APP_TAG" \
+    -d "$body" 2>/dev/null) || return 1
+
+  # The WAF answers in HTML when it objects, so this has to survive being
+  # handed something that is not JSON at all.
+  token=$(printf '%s' "$response" | jq -r '.access_token // empty' 2>/dev/null)
+  [ -n "$token" ] || return 1
+
+  expires_in=$(printf '%s' "$response" | jq -r '.expires_in // 28800' 2>/dev/null)
+  new_refresh=$(printf '%s' "$response" | jq -r '.refresh_token // empty' 2>/dev/null)
+
+  printf '%s\n' "$token" | write_private "$CONFIG_DIR/access-token"
+  printf '%s\n' "$(( $(now) + expires_in ))" | write_private "$CONFIG_DIR/access-token-expires"
+  [ -n "$new_refresh" ] && printf '%s\n' "$new_refresh" | write_private "$CONFIG_DIR/refresh-token"
+
+  printf '%s' "$token"
+}
+
+base64url() { openssl base64 -A | tr '+/' '-_' | tr -d '='; }
+
+# Tesla's login is a browser affair: a password, probably a second factor, and
+# whatever bot check it feels like today. So the browser does the logging in
+# and hands back a code through the address bar, which is what PKCE is for:
+# no client secret has to live in a script anybody can read.
+cmd_login() {
+  local verifier challenge state url redirect code
+
+  verifier=$(openssl rand 64 | base64url)
+  challenge=$(printf '%s' "$verifier" | openssl dgst -sha256 -binary | base64url)
+  state=$(openssl rand 16 | base64url)
+
+  url="$AUTH/authorize?client_id=$CLIENT_ID&code_challenge=$challenge&code_challenge_method=S256&redirect_uri=$(printf '%s' "$REDIRECT" | jq -sRr @uri)&response_type=code&scope=$(printf '%s' "$SCOPE" | jq -sRr @uri)&state=$state"
+
+  cat <<EOF
+
+Sign in to Tesla in a browser, with the account the car is on.
+
+  $url
+
+Tesla will send you to an address starting with $REDIRECT.
+Your browser cannot follow that, so it will refuse, or offer to open an app,
+and the address you need may never appear in the address bar. Open the
+developer tools on the Network tab before you sign in, and read the Location
+header off the last redirect.
+
+If that sounds like more trouble than it is worth, it is: press Ctrl-C and use
+`tesla token` with a refresh token from one of the apps in the README instead.
+
+EOF
+
+  command -v xdg-open >/dev/null 2>&1 && xdg-open "$url" >/dev/null 2>&1 &
+
+  printf 'Address: '
+  read -r redirect
+
+  code=$(printf '%s' "$redirect" | sed -n 's/.*[?&]code=\([^&]*\).*/\1/p')
+  [ -n "$code" ] || die "no code in that address. Paste the whole thing, including the ?code=... part"
+
+  local body response refresh
+  body=$(jq -cn --arg id "$CLIENT_ID" --arg code "$code" --arg verifier "$verifier" --arg redirect "$REDIRECT" \
+    '{grant_type: "authorization_code", client_id: $id, code: $code, code_verifier: $verifier, redirect_uri: $redirect}')
+
+  response=$(curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
+    -H "Content-Type: application/json" \
+    -H "User-Agent: $APP_UA" -H "X-Tesla-User-Agent: $APP_TAG" -d "$body")
+
+  refresh=$(printf '%s' "$response" | jq -r '.refresh_token // empty' 2>/dev/null)
+  [ -n "$refresh" ] || die "Tesla did not hand over a refresh token: $(printf '%s' "$response" | jq -r '.error_description // .error // .' 2>/dev/null)"
+
+  printf '%s\n' "$refresh" | write_private "$CONFIG_DIR/refresh-token"
+  printf '%s\n' "$(printf '%s' "$response" | jq -r '.access_token')" | write_private "$CONFIG_DIR/access-token"
+  printf '%s\n' "$(( $(now) + $(printf '%s' "$response" | jq -r '.expires_in // 28800') ))" | write_private "$CONFIG_DIR/access-token-expires"
+
+  printf '\nSigned in. The token is in %s and nothing else needs doing.\n' "$CONFIG_DIR/refresh-token"
+}
+
+# The pleasant way in. Every token app hands you a refresh token; this takes
+# one, proves it works by spending it on an access token, and files both. No
+# browser, no developer tools, no custom URL scheme.
+cmd_token() {
+  local refresh access
+
+  if [ -t 0 ]; then
+    printf 'Paste the refresh token: '
+    read -r refresh
+  else
+    refresh=$(head -n1)
+  fi
+
+  refresh=$(printf '%s' "$refresh" | tr -d " \t\r\n\"")
+  [ -n "$refresh" ] || die "nothing pasted"
+
+  # Filed first, because mint_access_token is what reads it, and checked second
+  # by whether that worked. A token that cannot buy an access token is not a
+  # token worth keeping.
+  printf '%s\n' "$refresh" | write_private "$CONFIG_DIR/refresh-token"
+  rm -f "$CONFIG_DIR/access-token" "$CONFIG_DIR/access-token-expires"
+
+  access=$(mint_access_token "$refresh") || {
+    rm -f "$CONFIG_DIR/refresh-token"
+    die "Tesla would not accept that token. Check you pasted the refresh token rather than the access token."
+  }
+
+  [ -n "$access" ] || die "Tesla would not accept that token"
+  printf 'Signed in. The token is in %s and nothing else needs doing.\n' "$CONFIG_DIR/refresh-token"
+}
+
+cmd_logout() {
+  rm -f "$CONFIG_DIR/refresh-token" "$CONFIG_DIR/access-token" "$CONFIG_DIR/access-token-expires"
+  printf 'Signed out. Tesla still lists the app under Security in your account; revoke it there to be thorough.\n'
+}
+
+# ----------------------------------------------------------------- transport
+
+# Where `api` leaves Tesla's complaint, when it made one.
+#
+# A file and not a variable, which looks like overkill until you notice that
+# every caller writes `$(api ...)`. Command substitution runs the function in a
+# subshell, and a global assigned in a subshell is thrown away with it, so the
+# obvious version of this silently reported success on every error.
+readonly API_ERROR_FILE="$CACHE_DIR/.last-error"
+
+api_error() { cat "$API_ERROR_FILE" 2>/dev/null; }
+
+api() {
+  local path="$1" method="${2:-GET}" token body
+  : > "$API_ERROR_FILE"
+
+  token=$(access_token) || { printf 'not signed in' > "$API_ERROR_FILE"; return 2; }
+
+  body=$(curl -sS -m 30 -X "$method" \
+    -H "Authorization: Bearer $token" \
+    -H "User-Agent: $APP_UA" \
+    -H "X-Tesla-User-Agent: $APP_TAG" \
+    -H "Accept: application/json" \
+    "$OWNER_API/$path" 2>/dev/null) || { printf 'cannot reach Tesla' > "$API_ERROR_FILE"; return 1; }
+
+  # Tesla says no in JSON, so an error body still parses and still has to be
+  # noticed. Reading past it is how a widget ends up cheerfully reporting a
+  # cached "online" about a car it has lost access to.
+  local complaint
+  complaint=$(printf '%s' "$body" | jq -r '.error // empty' 2>/dev/null)
+  case "$complaint" in
+    "") ;;
+    *fleet-api*|*fleetapi*) printf 'owner API retired for this account' > "$API_ERROR_FILE" ;;
+    *) printf '%s' "$complaint" > "$API_ERROR_FILE" ;;
+  esac
+
+  printf '%s' "$body"
+}
+
+# The one hint worth spelling out, because it is the end of the road for this
+# widget rather than something to retry.
+api_hint() {
+  case "$(api_error)" in
+    "owner API retired"*) printf '%s' "Tesla has moved this account to the Fleet API, which this widget does not speak" ;;
+    "not signed in") printf '%s' "run: tesla login" ;;
+    *) printf '' ;;
+  esac
+}
+
+# ------------------------------------------------------------------ vehicles
+
+# The vehicle list is cached because it changes when you buy a car, and asking
+# for it is a round trip the bar would otherwise make every time it polls.
+# `/api/1/vehicles` is the obvious endpoint and Tesla has retired it for owner
+# tokens; `/api/1/products` still answers and carries the same fields.
+vehicle_json() {
+  local cache="$CACHE_DIR/vehicle.json" age response
+
+  if [ -r "$cache" ]; then
+    age=$(( $(now) - $(stat -c %Y "$cache" 2>/dev/null || echo 0) ))
+    [ "$age" -lt 86400 ] && cat "$cache" && return 0
+  fi
+
+  response=$(api products) || return 2
+  [ -z "$(api_error)" ] || return 3
+  local picked
+  picked=$(printf '%s' "$response" | jq -c --arg vin "$VIN" '
+    [.response[]? | select(.vin != null)]
+    | (if $vin == "" then .[0] else (map(select(.vin == $vin)) | .[0]) end)
+    // empty')
+
+  [ -n "$picked" ] || return 1
+  printf '%s' "$picked" > "$cache"
+  printf '%s' "$picked"
+}
+
+# The state poll. This is the one the bar runs on a timer, and it must stay
+# free: it reads Tesla's copy of the car's state, not the car.
+cmd_state() {
+  if has_fixture; then
+    jq -c --arg at "$(now)" '{ok: true, at: ($at|tonumber), fixture: true,
+                              state: (.state // "online"), id: "fixture",
+                              vin: (.vin // "FIXTURE"), name: (.name // "Tesla")}' "$(fixture_path)"
+    return 0
+  fi
+
+  local vehicle
+  vehicle=$(vehicle_json) || fail_json "$(api_error)" "$(api_hint)"
+
+  local id state
+  id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
+
+  # Straight from the summary rather than the cached copy, so a car that woke
+  # up since the list was cached is reported awake.
+  state=$(api "vehicles/$id" | jq -r '.response.state // empty' 2>/dev/null)
+  [ -z "$(api_error)" ] || fail_json "$(api_error)" "$(api_hint)"
+  [ -n "$state" ] || state=$(printf '%s' "$vehicle" | jq -r '.state // "unknown"')
+
+  jq -cn --argjson v "$vehicle" --arg state "$state" --arg at "$(now)" '
+    {ok: true, state: $state, at: ($at|tonumber),
+     id: ($v.id_s // ($v.id|tostring)), vin: $v.vin,
+     name: (if ($v.display_name // "") == "" then "Tesla" else $v.display_name end)}'
+}
+
+# ------------------------------------------------------------------ readings
+
+# Tesla reports miles and mph on the wire whatever the car shows on its own
+# screen, and reports which of the two the screen shows in gui_settings. The
+# panel follows the dashboard: a number here that disagrees with the one in
+# the car is worse than no number.
+reading_json() {
+  local raw="$1" state="$2" fresh="$3"
+  printf '%s' "$raw" | jq -c --arg state "$state" --argjson fresh "$fresh" --arg at "$(now)" '
+    . as $r
+    | ($r.gui_settings.gui_distance_units // "km/hr") as $units
+    | (if ($units | startswith("mi")) then 1 else 1.609344 end) as $k
+    | (if ($units | startswith("mi")) then "mi" else "km" end) as $dist
+    | (if ($units | startswith("mi")) then "mph" else "km/h" end) as $speed
+    | (if ($r.gui_settings.gui_range_display // "Rated") == "Ideal"
+       then $r.charge_state.ideal_battery_range else $r.charge_state.battery_range end) as $range
+    # Tesla reports Celsius and bar on the wire and states the screen'"'"'s own
+    # preference separately, the same as it does for distance. Convert once,
+    # here, so nothing downstream has to know which car this is.
+    | (($r.gui_settings.gui_temperature_units // "C") == "F") as $fahrenheit
+    | (if $fahrenheit then 1.8 else 1 end) as $tc
+    | (if $fahrenheit then 32 else 0 end) as $to
+    | (if $fahrenheit then "°F" else "°C" end) as $tunit
+    | (($r.gui_settings.gui_tirepressure_units // "Bar") | ascii_downcase == "psi") as $psi
+    | (if $psi then 14.5038 else 1 end) as $pc
+    | (if $psi then "psi" else "bar" end) as $punit
+    | ([$r.vehicle_state.tpms_pressure_fl, $r.vehicle_state.tpms_pressure_fr,
+        $r.vehicle_state.tpms_pressure_rl, $r.vehicle_state.tpms_pressure_rr]
+       | map(select(. != null and . > 0) * $pc)) as $tpms
+    # Grouped rather than listed one by one: "a door" is what you act on, and
+    # which of the four it is you find out by walking up to the car.
+    | ([(if (($r.vehicle_state.df // 0) + ($r.vehicle_state.dr // 0)
+            + ($r.vehicle_state.pf // 0) + ($r.vehicle_state.pr // 0)) != 0
+         then "a door" else empty end),
+        (if ($r.vehicle_state.ft // 0) != 0 then "the frunk" else empty end),
+        (if ($r.vehicle_state.rt // 0) != 0 then "the boot" else empty end),
+        (if (($r.vehicle_state.fd_window // 0) + ($r.vehicle_state.fp_window // 0)
+            + ($r.vehicle_state.rd_window // 0) + ($r.vehicle_state.rp_window // 0)) != 0
+         then "a window" else empty end)]) as $open
+    | {ok: true,
+       fresh: $fresh,
+       state: $state,
+       at: ($at|tonumber),
+       name: (if ($r.vehicle_state.vehicle_name // "") == "" then "Tesla" else $r.vehicle_state.vehicle_name end),
+       vin: $r.vin,
+       lat: $r.drive_state.latitude,
+       lon: $r.drive_state.longitude,
+       heading: $r.drive_state.heading,
+       gps_as_of: $r.drive_state.gps_as_of,
+       shift: ($r.drive_state.shift_state // "P"),
+       driving: (($r.drive_state.shift_state // "P") != "P" and ($r.drive_state.shift_state // null) != null),
+       speed: (if $r.drive_state.speed == null then null else ($r.drive_state.speed * $k | round) end),
+       speed_unit: $speed,
+       battery: $r.charge_state.battery_level,
+       battery_usable: $r.charge_state.usable_battery_level,
+       charge_limit: $r.charge_state.charge_limit_soc,
+       charging: ($r.charge_state.charging_state // "Unknown"),
+       charger_power: $r.charge_state.charger_power,
+       energy_added: $r.charge_state.charge_energy_added,
+       minutes_to_full: $r.charge_state.minutes_to_full_charge,
+       range: (if $range == null then null else ($range * $k * 10 | round / 10) end),
+       range_unit: $dist,
+       odometer: (if $r.vehicle_state.odometer == null then null else ($r.vehicle_state.odometer * $k | round) end),
+       locked: $r.vehicle_state.locked,
+       sentry: $r.vehicle_state.sentry_mode,
+       climate_on: $r.climate_state.is_climate_on,
+       inside_temp: (if $r.climate_state.inside_temp == null then null
+                     else ($r.climate_state.inside_temp * $tc + $to | round) end),
+       outside_temp: (if $r.climate_state.outside_temp == null then null
+                      else ($r.climate_state.outside_temp * $tc + $to | round) end),
+       temp_unit: $tunit,
+       tyres: ($tpms | if length == 0 then null else {min: (min * 10 | round / 10),
+                                                     max: (max * 10 | round / 10)} end),
+       tyre_unit: $punit,
+       software: $r.vehicle_state.car_version,
+       open: $open,
+       car_type: $r.vehicle_config.car_type,
+       trim: $r.vehicle_config.trim_badging}'
+}
+
+# Everything the panel shows, and the whole of the sleep policy.
+#
+# The order matters. State first, because it is free and it decides whether
+# asking the car is even possible. Then the throttle, because a parked car
+# that answered ten minutes ago has not moved and does not need asking again.
+# Only then the expensive call.
+cmd_car() {
+  if has_fixture; then
+    serve_fixture
+    return 0
+  fi
+
+  local vehicle
+  vehicle=$(vehicle_json) || serve_cache_or_fail
+
+  local id cache state cached
+  id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
+  cache="$CACHE_DIR/car.json"
+  cached=""
+  [ -r "$cache" ] && cached=$(cat "$cache")
+
+  state=$(api "vehicles/$id" | jq -r '.response.state // empty' 2>/dev/null)
+  [ -z "$(api_error)" ] || serve_cache_or_fail
+  [ -n "$state" ] || state=$(printf '%s' "$vehicle" | jq -r '.state // "unknown"')
+
+  # Asleep or offline: the reading on disk is the only answer there is, and it
+  # is the right one: a car that is asleep is a car that is parked, and a
+  # parked car is where we last saw it.
+  if [ "$state" != "online" ]; then
+    serve_cache "$cached" "$state"
+    return 0
+  fi
+
+  # Awake, but that does not make it ours to poll. A car sitting on the drive
+  # with the doors just closed is online for another quarter of an hour, and
+  # asking it anything during that window is what stops it dropping off.
+  if [ "$FORCE" -ne 1 ] && [ -n "$cached" ]; then
+    local age driving charging throttle
+    age=$(( $(now) - $(printf '%s' "$cached" | jq -r '.at // 0') ))
+    driving=$(printf '%s' "$cached" | jq -r '.driving // false')
+    charging=$(printf '%s' "$cached" | jq -r '.charging // "Unknown"')
+
+    # Both exceptions are the same argument: the car is being held awake by
+    # something that is not us, so a reading costs nothing it was not already
+    # spending. Everything else waits out the park throttle.
+    throttle=$PARK_THROTTLE
+    [ "$charging" = "Charging" ] && throttle=$CHARGE_THROTTLE
+    [ "$driving" = "true" ] && throttle=$DRIVE_THROTTLE
+
+    if [ "$age" -lt "$throttle" ]; then
+      serve_cache "$cached" "$state"
+      return 0
+    fi
+  fi
+
+  local response raw
+  response=$(api "vehicles/$id/vehicle_data?endpoints=$(printf '%s' 'location_data;drive_state;charge_state;gui_settings;vehicle_state;vehicle_config;climate_state' | jq -sRr @uri)")
+  raw=$(printf '%s' "$response" | jq -c '.response // empty' 2>/dev/null)
+
+  # 408 is the documented answer from a car that went to sleep between the
+  # state check and this call. Nothing to do about it and nothing to retry:
+  # retrying is how you end up waking it.
+  if [ -z "$raw" ]; then
+    serve_cache "$cached" "asleep"
+    return 0
+  fi
+
+  local reading
+  reading=$(reading_json "$raw" "$state" true)
+  printf '%s' "$reading" > "$cache"
+  printf '%s\n' "$reading"
+}
+
+# Tesla has stopped answering, but where the car was is still where the car is.
+# The last reading goes out with the complaint attached, so the panel can show
+# both rather than going blank about a car parked in a perfectly known place.
+serve_cache_or_fail() {
+  local cached=""
+  [ -r "$CACHE_DIR/car.json" ] && cached=$(cat "$CACHE_DIR/car.json")
+
+  if [ -z "$cached" ]; then
+    fail_json "$(api_error)" "$(api_hint)"
+  fi
+
+  printf '%s' "$cached" | jq -c --arg now "$(now)" --arg error "$(api_error)" --arg hint "$(api_hint)" \
+    '. + {fresh: false, state: "unknown", error: $error, hint: $hint,
+          age: (($now|tonumber) - (.at // 0))}'
+  exit 0
+}
+
+# A cached reading, re-stamped so the panel can say how old it is, and marked
+# stale so it can say so out loud.
+serve_cache() {
+  local cached="$1" state="$2"
+
+  if [ -z "$cached" ]; then
+    fail_json "no reading yet" "the car has not been awake since this was installed"
+  fi
+
+  printf '%s' "$cached" | jq -c --arg state "$state" --arg now "$(now)" \
+    '. + {fresh: false, state: $state, age: (($now|tonumber) - (.at // 0))}'
+}
+
+# The one call that wakes a sleeping car, kept behind its own command so it
+# can only ever happen because somebody asked for it.
+cmd_wake() {
+  local vehicle id
+  vehicle=$(vehicle_json) || fail_json "$(api_error)" "$(api_hint)"
+  id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
+
+  api "vehicles/$id/wake_up" POST >/dev/null 2>&1
+  jq -cn '{ok: true, woken: true}'
+}
+
+# --------------------------------------------------------------------- maps
+
+# Slippy-map arithmetic, the same everyone uses: the world at zoom z is a grid
+# of 2^z square tiles, and a coordinate lands at a fractional position in it.
+#
+# What comes back is a list of tiles with the pixel position each one takes
+# inside the view, so the QML can lay them out without knowing any of this.
+# Stitching them into one image here would need an image tool this script has
+# deliberately not got.
+cmd_map() {
+  local lat="$1" lon="$2" zoom="$3" width="$4" height="$5"
+
+  case "$lat$lon$zoom$width$height" in
+    *[!0-9.\-]*) fail_json "map wants numbers" ;;
+  esac
+
+  local plan
+  plan=$(awk -v lat="$lat" -v lon="$lon" -v z="$zoom" -v w="$width" -v h="$height" '
+    BEGIN {
+      pi = 3.14159265358979
+      size = 256
+      n = 2 ^ z
+      rad = lat * pi / 180
+      # Web Mercator: longitude is linear, latitude runs through the log-tangent.
+      fx = (lon + 180) / 360 * n
+      fy = (1 - log((sin(rad) / cos(rad)) + (1 / cos(rad))) / pi) / 2 * n
+
+      # Where the car sits in world pixels, and the window we want around it.
+      cx = fx * size
+      cy = fy * size
+      left = cx - w / 2
+      top  = cy - h / 2
+
+      x0 = int(left / size); if (left < 0 && left != x0 * size) x0--
+      y0 = int(top  / size); if (top  < 0 && top  != y0 * size) y0--
+      x1 = int((left + w - 1) / size); if ((left + w - 1) < 0) x1--
+      y1 = int((top  + h - 1) / size); if ((top  + h - 1) < 0) y1--
+
+      # The car is dead centre by construction; printing it keeps the QML from
+      # having to trust that.
+      printf "car %d %d\n", int(w / 2 + 0.5), int(h / 2 + 0.5)
+
+      for (ty = y0; ty <= y1; ty++) {
+        for (tx = x0; tx <= x1; tx++) {
+          # Off the top or bottom of the world there is no tile; wrap around
+          # the date line rather than asking for a column that does not exist.
+          if (ty < 0 || ty >= n) continue
+          wx = tx % n; if (wx < 0) wx += n
+          printf "tile %d %d %d %d\n", wx, ty, int(tx * size - left + 0.5), int(ty * size - top + 0.5)
+        }
+      }
+    }')
+
+  local car_x car_y
+  car_x=$(printf '%s' "$plan" | awk '/^car/ {print $2}')
+  car_y=$(printf '%s' "$plan" | awk '/^car/ {print $3}')
+
+  local tiles="[]"
+  while read -r _ tx ty px py; do
+    [ -n "${tx:-}" ] || continue
+    local path
+    path=$(fetch_tile "$zoom" "$tx" "$ty") || continue
+    tiles=$(printf '%s' "$tiles" | jq -c --arg path "$path" --argjson px "$px" --argjson py "$py" \
+      '. + [{path: $path, x: $px, y: $py}]')
+  done < <(printf '%s' "$plan" | grep '^tile')
+
+  jq -cn --argjson tiles "$tiles" --argjson w "$width" --argjson h "$height" \
+    --argjson cx "${car_x:-0}" --argjson cy "${car_y:-0}" --argjson z "$zoom" '
+    {ok: true, width: $w, height: $h, zoom: $z, tileSize: 256,
+     carX: $cx, carY: $cy, tiles: $tiles,
+     attribution: "© OpenStreetMap contributors © CARTO"}'
+}
+
+# Tiles are immutable for practical purposes, so one that is on disk is never
+# fetched again. This is the whole of being a good guest on a free tile server.
+fetch_tile() {
+  local z="$1" x="$2" y="$3"
+  local dir="$CACHE_DIR/tiles/$(printf '%s' "$TILE_URL" | md5sum | cut -c1-8)/$z/$x"
+  local path="$dir/$y.png"
+
+  if [ -s "$path" ]; then printf '%s' "$path"; return 0; fi
+
+  mkdir -p "$dir"
+  local url="${TILE_URL//\{z\}/$z}"
+  url="${url//\{x\}/$x}"
+  url="${url//\{y\}/$y}"
+
+  if curl -sS -f -m 20 -A "$MAP_UA" -o "$path.part" "$url" 2>/dev/null && [ -s "$path.part" ]; then
+    mv -f "$path.part" "$path"
+    printf '%s' "$path"
+    return 0
+  fi
+
+  rm -f "$path.part"
+  return 1
+}
+
+# Where the car is, in words. Nominatim asks for no more than one call a
+# second and would rather you cached; coordinates are rounded to about ten
+# metres first, so a car sitting still is one lookup however often you look.
+cmd_place() {
+  local lat="$1" lon="$2"
+  local key path response
+
+  key=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.4f_%.4f", a, b }')
+  path="$CACHE_DIR/places/$key.json"
+
+  if [ -s "$path" ]; then cat "$path"; return 0; fi
+
+  response=$(curl -sS -f -m 20 -A "$MAP_UA" \
+    "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat=$lat&lon=$lon" 2>/dev/null) \
+    || fail_json "no address"
+
+  # A street and a town is what you want to read; the full display_name is a
+  # paragraph ending in the country you are standing in.
+  #
+  # The house number comes back on its own as well as folded into `place`,
+  # because it is worth having when the car is parked and noise when it is
+  # moving: at speed the nearest address changes every second and the line
+  # flickers through numbers nobody is reading.
+  printf '%s' "$response" | jq -c '
+    .address as $a
+    | ($a.road // $a.pedestrian // $a.footway // "") as $road
+    | ($a.house_number // "") as $number
+    | ($a.village // $a.town // $a.city // $a.suburb // $a.municipality // "") as $town
+    | {ok: true,
+       street: $road,
+       number: $number,
+       town: $town,
+       place: ([[$road, $number] | map(select(. != "")) | join(" "), $town]
+               | map(select(. != "")) | join(", "))}' > "$path"
+
+  cat "$path"
+}
+
+# ------------------------------------------------------------------- options
+
+usage() {
+  cat <<'EOF'
+tesla: read one Tesla, without keeping it awake.
+
+  token                     paste a refresh token from a token app. The easy way
+  login                     sign in through the browser instead. Needs devtools
+  logout                    forget the tokens on this machine
+  state                     online / asleep / offline. Free; never wakes the car
+  car [--force]             everything the panel shows, subject to the sleep policy
+  wake                      wake a sleeping car. The only call that does
+  map LAT LON ZOOM W H      map tiles around a point, fetched and cached
+  place LAT LON             that point as a street and a town
+
+A reading in ~/.config/omarchy-tesla/fixture.json overrides `state` and `car`
+entirely, for working on the panel without the car moving under you. Delete the
+file to go back to the real car.
+
+Options:
+  --vin VIN                 pick a car, when the account has more than one
+  --park-throttle SECONDS   how long a parked car is left alone (default 900)
+  --tile-url URL            {z}/{x}/{y} template for map tiles
+EOF
+}
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --vin) VIN="${2-}"; shift 2 ;;
+    --park-throttle) PARK_THROTTLE="${2-}"; shift 2 ;;
+    --tile-url) TILE_URL="${2-}"; shift 2 ;;
+    --force) FORCE=1; shift ;;
+    -h|--help) usage; exit 0 ;;
+    --) shift; break ;;
+    -*) die "unknown option $1" ;;
+    *) break ;;
+  esac
+done
+
+[ $# -gt 0 ] || { usage; exit 1; }
+
+command="$1"; shift
+
+# Options are read again after the command, because `car --force` is how
+# anybody would write it and the loop above stops at the first word that is not
+# an option. Read only once, `--force` arrived as an argument to `car`, which
+# ignored it, so the panel's Refresh button quietly did not force anything.
+rest=()
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --force) FORCE=1; shift ;;
+    *) rest+=("$1"); shift ;;
+  esac
+done
+set -- ${rest[@]+"${rest[@]}"}
+
+case "$command" in
+  token)  cmd_token ;;
+  login)  cmd_login ;;
+  logout) cmd_logout ;;
+  state)  cmd_state ;;
+  car)    cmd_car ;;
+  wake)   cmd_wake ;;
+  map)    [ $# -eq 5 ] || die "map wants LAT LON ZOOM WIDTH HEIGHT"; cmd_map "$@" ;;
+  place)  [ $# -eq 2 ] || die "place wants LAT LON"; cmd_place "$@" ;;
+  *)      die "unknown command $command" ;;
+esac

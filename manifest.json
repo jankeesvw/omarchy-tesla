@@ -1,0 +1,109 @@
+{
+  "schemaVersion": 1,
+  "id": "jankeesvw.tesla",
+  "name": "Tesla",
+  "version": "1.0.0",
+  "author": "Jankees van Woezik",
+  "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
+  "homepage": "https://github.com/jankeesvw/omarchy-tesla",
+  "license": "MIT",
+  "kinds": [
+    "bar-widget"
+  ],
+  "entryPoints": {
+    "barWidget": "Panel.qml"
+  },
+  "barWidget": {
+    "displayName": "Tesla",
+    "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
+    "category": "Home",
+    "allowMultiple": false,
+    "defaultSection": "right",
+    "defaults": {
+      "vin": "",
+      "panelWidth": 380,
+      "mapZoom": 16,
+      "mapStyle": "Auto",
+      "statePollMinutes": 5,
+      "parkThrottleMinutes": 15,
+      "showAddress": true,
+      "mapsUrl": "https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+    },
+    "schema": [
+      {
+        "key": "vin",
+        "type": "string",
+        "label": "VIN",
+        "defaultValue": "",
+        "description": "Which car, when the account has more than one. Empty picks the first one Tesla lists, which is the right answer for almost everybody."
+      },
+      {
+        "key": "mapStyle",
+        "type": "enum",
+        "label": "Map",
+        "options": [
+          "Auto",
+          "Dark",
+          "Light",
+          "OpenStreetMap"
+        ],
+        "defaultValue": "Auto",
+        "description": "Auto follows your theme: a light theme gets CARTO's light basemap, a dark one gets its dark basemap. Both are quiet enough to read a marker off, which is why they beat OpenStreetMap's own standard style here. That one is the map everybody recognises, and considerably louder behind a marker."
+      },
+      {
+        "key": "mapZoom",
+        "type": "integer",
+        "label": "Zoom",
+        "min": 3,
+        "max": 19,
+        "step": 1,
+        "defaultValue": 16,
+        "description": "16 shows the street the car is on and the ones either side, which is the level at which you can tell whether it is where you left it. Lower to see which town, higher to see which parking space."
+      },
+      {
+        "key": "panelWidth",
+        "type": "integer",
+        "label": "Panel width",
+        "min": 300,
+        "max": 900,
+        "step": 20,
+        "defaultValue": 380,
+        "description": "In the shell's spacing units. The map is this wide and everything else is measured off it, so this one number sizes the whole panel. Anything wider than the screen is trimmed to fit."
+      },
+      {
+        "key": "showAddress",
+        "type": "boolean",
+        "label": "Look the position up by name",
+        "defaultValue": true,
+        "description": "Turns the coordinates into a street and a town, through OpenStreetMap's Nominatim. Answers are cached per position, so a parked car is one lookup however often you look at it. Off if you would rather nothing but Tesla learned where the car is."
+      },
+      {
+        "key": "statePollMinutes",
+        "type": "integer",
+        "label": "Check whether the car is awake every",
+        "min": 1,
+        "max": 60,
+        "step": 1,
+        "defaultValue": 5,
+        "description": "Minutes. This is the cheap question: Tesla answers it from its own records and the car is never involved, so it costs the car nothing at any interval. It is what lights the bar icon."
+      },
+      {
+        "key": "parkThrottleMinutes",
+        "type": "integer",
+        "label": "Leave a parked car alone for",
+        "min": 5,
+        "max": 120,
+        "step": 5,
+        "defaultValue": 15,
+        "description": "Minutes. Reading a car that is awake resets its sleep timer, and a car whose timer keeps resetting never sleeps and flattens its battery over a week of standing still. Tesla needs roughly fifteen minutes of quiet, so shorter than that is the setting that costs you range. A car that is driving or charging is exempt: it is awake regardless."
+      },
+      {
+        "key": "mapsUrl",
+        "type": "string",
+        "label": "Where a click on the map goes",
+        "defaultValue": "https://www.google.com/maps/search/?api=1&query={lat},{lon}",
+        "description": "The address opened when you click the map, with {lat} and {lon} standing in for the position. Google Maps by default because that is what most people navigate with; https://www.openstreetmap.org/?mlat={lat}&mlon={lon}#map=17/{lat}/{lon} keeps it in OpenStreetMap."
+      }
+    ]
+  }
+}
