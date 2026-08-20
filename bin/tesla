@@ -349,8 +349,13 @@ api_hint() {
 # for it is a round trip the bar would otherwise make every time it polls.
 # `/api/1/vehicles` is the obvious endpoint and Tesla has retired it for owner
 # tokens; `/api/1/products` still answers and carries the same fields.
+#
+# Keyed by VIN, not just CACHE_DIR: an account with more than one car can have
+# its --vin changed (a new one, an old one sold), and a cache that does not
+# know which car it is holding will keep answering for the wrong one until it
+# ages out, up to a day later.
 vehicle_json() {
-  local cache="$CACHE_DIR/vehicle.json" age response
+  local cache="$CACHE_DIR/vehicle-${VIN:-_}.json" age response
 
   if [ -r "$cache" ]; then
     age=$(( $(now) - $(stat -c %Y "$cache" 2>/dev/null || echo 0) ))
@@ -495,7 +500,7 @@ cmd_car() {
 
   local id cache state cached
   id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
-  cache="$CACHE_DIR/car.json"
+  cache="$CACHE_DIR/car-${VIN:-_}.json"
   cached=""
   [ -r "$cache" ] && cached=$(cat "$cache")
 
@@ -555,8 +560,8 @@ cmd_car() {
 # The last reading goes out with the complaint attached, so the panel can show
 # both rather than going blank about a car parked in a perfectly known place.
 serve_cache_or_fail() {
-  local cached=""
-  [ -r "$CACHE_DIR/car.json" ] && cached=$(cat "$CACHE_DIR/car.json")
+  local cached="" cache="$CACHE_DIR/car-${VIN:-_}.json"
+  [ -r "$cache" ] && cached=$(cat "$cache")
 
   if [ -z "$cached" ]; then
     fail_json "$(api_error)" "$(api_hint)"

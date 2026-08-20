@@ -467,11 +467,11 @@ Panel {
     activeColor: root.liveGreen
     dimmed: root.asleep || root.errorText !== ""
     tooltipText: {
-      if (root.errorText !== "") return "Dude, where's my car? " + root.errorText
-      if (!root.hasReading) return "Dude, where's my car?"
-      if (root.driving) return root.summary
-      if (root.place !== "") return "Parked at " + root.place
-      return root.summary
+      if (root.errorText !== "") return root.carName + ": " + root.errorText
+      if (!root.hasReading) return root.carName + ": no reading yet"
+      if (root.driving) return root.carName + " — " + root.summary
+      if (root.place !== "") return root.carName + " — Parked at " + root.place
+      return root.carName + " — " + root.summary
     }
 
     onPressed: function(b) {
