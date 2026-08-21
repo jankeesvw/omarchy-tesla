@@ -104,7 +104,13 @@ need jq
 need awk
 need openssl
 
-mkdir -p "$CONFIG_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places"
+# Both trees are private, and not only for the tokens. The cache is a record
+# of where the car has been: car.json carries the last position, and the
+# geocode cache spells the coordinates out in its own filenames, so a `ls` of
+# it is a movement log. On a machine with a second account, mode 755 hands
+# that over for the reading. The chmod covers installs that predate this.
+( umask 077; mkdir -p "$CONFIG_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places" )
+chmod 700 "$CONFIG_DIR" "$CACHE_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places" 2>/dev/null || true
 
 now() { date +%s; }
 
@@ -391,7 +397,7 @@ vehicle_json() {
     // empty')
 
   [ -n "$picked" ] || return 1
-  printf '%s' "$picked" > "$cache"
+  printf '%s' "$picked" | write_private "$cache"
   printf '%s' "$picked"
 }
 
@@ -572,7 +578,7 @@ cmd_car() {
 
   local reading
   reading=$(reading_json "$raw" "$state" true)
-  printf '%s' "$reading" > "$cache"
+  printf '%s' "$reading" | write_private "$cache"
   printf '%s\n' "$reading"
 }
 
@@ -699,7 +705,7 @@ fetch_tile() {
 
   if [ -s "$path" ]; then printf '%s' "$path"; return 0; fi
 
-  mkdir -p "$dir"
+  ( umask 077; mkdir -p "$dir" )
   local url="${TILE_URL//\{z\}/$z}"
   url="${url//\{x\}/$x}"
   url="${url//\{y\}/$y}"
@@ -720,6 +726,12 @@ fetch_tile() {
 cmd_place() {
   local lat="$1" lon="$2"
   local key path response
+
+  # Same check `map` makes. These are pasted straight into a query string, and
+  # a coordinate that is not a number is not a coordinate.
+  case "$lat$lon" in
+    *[!0-9.\-]*|'') fail_json "place wants numbers"; return 0 ;;
+  esac
 
   key=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.4f_%.4f", a, b }')
   path="$CACHE_DIR/places/$key.json"
@@ -747,7 +759,7 @@ cmd_place() {
        number: $number,
        town: $town,
        place: ([[$road, $number] | map(select(. != "")) | join(" "), $town]
-               | map(select(. != "")) | join(", "))}' > "$path"
+               | map(select(. != "")) | join(", "))}' | write_private "$path"
 
   cat "$path"
 }
