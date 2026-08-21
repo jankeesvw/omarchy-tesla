@@ -92,6 +92,17 @@ Panel {
   // missing. OpenStreetMap's standard style counts as light too.
   readonly property bool lightMap: effectiveMapStyle !== "Dark"
 
+  // Qt decides for itself whether a string is markup, and a Text or tooltip in
+  // that mode fetches `<img src="http://...">` for real, from inside the shell
+  // process. The address comes from Nominatim and the error text from Tesla, so
+  // neither is ours to vouch for. The panel's own Text elements are pinned to
+  // PlainText; the bar tooltip belongs to the shell and is not ours to set, so
+  // anything heading that way has its angle brackets taken off first — without
+  // a `<` there is nothing for Qt to mistake for a tag.
+  function plain(s) {
+    return String(s === undefined || s === null ? "" : s).replace(/[<>]/g, "")
+  }
+
   function cmd(args) {
     var base = [root.script,
                 "--park-throttle", String(root.parkThrottleMinutes * 60),
@@ -467,11 +478,11 @@ Panel {
     activeColor: root.liveGreen
     dimmed: root.asleep || root.errorText !== ""
     tooltipText: {
-      if (root.errorText !== "") return "Dude, where's my car? " + root.errorText
+      if (root.errorText !== "") return root.plain("Dude, where's my car? " + root.errorText)
       if (!root.hasReading) return "Dude, where's my car?"
-      if (root.driving) return root.summary
-      if (root.place !== "") return "Parked at " + root.place
-      return root.summary
+      if (root.driving) return root.plain(root.summary)
+      if (root.place !== "") return root.plain("Parked at " + root.place)
+      return root.plain(root.summary)
     }
 
     onPressed: function(b) {
@@ -550,6 +561,7 @@ Panel {
           }
 
           Text {
+            textFormat: Text.PlainText
             anchors.verticalCenter: parent.verticalCenter
             text: root.stateWord
             font.family: root.fontFamily
@@ -587,6 +599,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           anchors.centerIn: parent
           visible: !root.hasPosition
           text: root.errorText !== "" ? root.errorText
@@ -620,6 +633,7 @@ Panel {
         spacing: Style.space(2)
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           visible: root.place !== ""
           text: root.place
@@ -630,6 +644,7 @@ Panel {
         }
 
         Text {
+          textFormat: Text.PlainText
           width: parent.width
           text: root.summary
           elide: Text.ElideRight
@@ -704,6 +719,7 @@ Panel {
           height: batteryLabel.implicitHeight
 
           Text {
+            textFormat: Text.PlainText
             id: batteryLabel
             anchors.left: parent.left
             text: root.hasReading && root.reading.battery !== null
@@ -719,6 +735,7 @@ Panel {
           // The notch on the bar shows it, and the details grid names it.
 
           Text {
+            textFormat: Text.PlainText
             anchors.right: parent.right
             text: root.hasReading && root.reading.range !== null
               ? Math.round(root.reading.range) + " " + root.reading.range_unit : "\u2014"
@@ -814,6 +831,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         visible: root.openText !== ""
         text: root.openText
@@ -880,6 +898,7 @@ Panel {
       }
 
       Text {
+        textFormat: Text.PlainText
         width: parent.width
         visible: root.errorText !== ""
         text: root.errorText === "not signed in"
@@ -904,6 +923,7 @@ Panel {
     spacing: Style.space(2)
 
     Text {
+      textFormat: Text.PlainText
       text: label
       font.family: root.fontFamily
       font.pixelSize: Style.font.caption
@@ -912,6 +932,7 @@ Panel {
     }
 
     Text {
+      textFormat: Text.PlainText
       width: parent.width
       text: value
       elide: Text.ElideRight

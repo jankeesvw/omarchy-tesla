@@ -64,6 +64,7 @@ Item {
   }
 
   Text {
+    textFormat: Text.PlainText
     anchors.centerIn: parent
     visible: !root.ready
     text: "Looking for the map"
@@ -168,6 +169,7 @@ Item {
   // Both tile services ask for this, and both deserve it: the map is free
   // because somebody else is paying for it.
   Text {
+    textFormat: Text.PlainText
     anchors.right: parent.right
     anchors.bottom: parent.bottom
     anchors.margins: Style.space(4)
