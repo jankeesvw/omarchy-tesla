@@ -211,10 +211,12 @@ mint_access_token() {
   body=$(jq -cn --arg id "$CLIENT_ID" --arg rt "$refresh" --arg scope "$SCOPE" \
     '{grant_type: "refresh_token", client_id: $id, refresh_token: $rt, scope: $scope}')
 
-  response=$(curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
+  # Same reasoning as `api`, and more of it: this body carries the refresh
+  # token, which is the account until it is revoked. It goes in on stdin.
+  response=$(printf '%s' "$body" | curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
     -H "Content-Type: application/json" \
     -H "User-Agent: $APP_UA" -H "X-Tesla-User-Agent: $APP_TAG" \
-    -d "$body" 2>/dev/null) || return 1
+    --data-binary @- 2>/dev/null) || return 1
 
   # The WAF answers in HTML when it objects, so this has to survive being
   # handed something that is not JSON at all.
@@ -275,9 +277,9 @@ EOF
   body=$(jq -cn --arg id "$CLIENT_ID" --arg code "$code" --arg verifier "$verifier" --arg redirect "$REDIRECT" \
     '{grant_type: "authorization_code", client_id: $id, code: $code, code_verifier: $verifier, redirect_uri: $redirect}')
 
-  response=$(curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
+  response=$(printf '%s' "$body" | curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
     -H "Content-Type: application/json" \
-    -H "User-Agent: $APP_UA" -H "X-Tesla-User-Agent: $APP_TAG" -d "$body")
+    -H "User-Agent: $APP_UA" -H "X-Tesla-User-Agent: $APP_TAG" --data-binary @-)
 
   refresh=$(printf '%s' "$response" | jq -r '.refresh_token // empty' 2>/dev/null)
   [ -n "$refresh" ] || die "Tesla did not hand over a refresh token: $(printf '%s' "$response" | jq -r '.error_description // .error // .' 2>/dev/null)"
@@ -343,8 +345,21 @@ api() {
 
   token=$(access_token) || { printf 'not signed in' > "$API_ERROR_FILE"; return 2; }
 
-  body=$(curl -sS -m 30 -X "$method" \
-    -H "Authorization: Bearer $token" \
+  # A quote or a backslash would end the --config line early and turn the rest
+  # of the token into curl options. Tesla's tokens are base64url and contain
+  # neither, so anything that does is not a token worth sending.
+  case "$token" in
+    *[\"\\]*|*[[:space:]]*) printf 'malformed token' > "$API_ERROR_FILE"; return 2 ;;
+  esac
+
+  # The bearer token goes in on stdin, not in the arguments. /proc/PID/cmdline
+  # is mode 444 on a stock kernel — no hidepid — so every argument of every
+  # running process is readable by any account on the machine, and a widget
+  # that polls hands out a fresh window to catch it in on a loop. curl reads
+  # `header` lines from --config the same as -H, and stdin is nobody else's
+  # to read.
+  body=$(printf 'header = "Authorization: Bearer %s"\n' "$token" \
+    | curl -sS -m 30 -X "$method" --config - \
     -H "User-Agent: $APP_UA" \
     -H "X-Tesla-User-Agent: $APP_TAG" \
     -H "Accept: application/json" \
