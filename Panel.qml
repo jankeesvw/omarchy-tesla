@@ -48,6 +48,19 @@ Panel {
   // mark while the car is moving, and nothing else.
   readonly property color liveGreen: "#4caf50"
 
+  // And red while it is charging, for the same reason the live mark is a
+  // literal green: "it is filling up" should read the same in every theme
+  // rather than turning into whatever the accent is today. Material's red 500
+  // to the green's 500, so the two sit at the same weight. The error state
+  // keeps Color.urgent — a fault and a charge are both red, and the word
+  // beside the dot is what tells them apart, the same way it already
+  // distinguishes driving from parked.
+  readonly property color chargeRed: "#f44336"
+
+  // What the panel accents itself with: the charge colour while it is
+  // charging, the theme's accent the rest of the time.
+  readonly property color liveAccent: charging ? chargeRed : accent
+
   // ----------------------------------------------------------------- settings
 
   readonly property string vin: setting("vin", "")
@@ -556,6 +569,7 @@ Panel {
             color: root.errorText !== "" ? Color.urgent
                  : root.asleep ? Color.muted
                  : root.carState === "" ? root.foreground
+                 : root.charging ? root.chargeRed
                  : root.liveGreen
             opacity: root.asleep ? 0.7 : 1
           }
@@ -594,7 +608,7 @@ Panel {
           driving: root.driving
           stale: root.stale
           foreground: root.foreground
-          accent: root.accent
+          accent: root.liveAccent
           fontFamily: root.fontFamily
         }
 
@@ -688,7 +702,7 @@ Panel {
               (root.hasReading && root.reading.battery !== null ? root.reading.battery : 0) / 100))
             height: parent.height
             radius: parent.radius
-            color: root.charging ? root.accent : root.foreground
+            color: root.charging ? root.chargeRed : root.foreground
             opacity: root.charging ? 1 : 0.8
 
             Behavior on width {
