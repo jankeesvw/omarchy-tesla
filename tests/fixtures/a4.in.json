@@ -1,0 +1,11 @@
+{
+  "display_name": "leak-display",
+  "address": {
+    "road": "Spandauer Straße",
+    "city": "Berlin",
+    "country_code": "de",
+    "postcode": "leak-postcode",
+    "county": "leak-county",
+    "country": "leak-country"
+  }
+}

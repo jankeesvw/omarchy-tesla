@@ -133,21 +133,25 @@ Panel {
   property var reading: null
   // The tile plan for the position in `reading`.
   property var mapPlan: null
-  // The position in `reading`, as a street and a town. Kept in parts, because
-  // the house number is worth having when the car is parked and noise when it
-  // is moving.
+  // Parked line comes pre-joined from `tesla place` (number-first or
+  // number-last by the country of the pin). Street and town are kept so a
+  // moving car can drop the house number without another lookup.
   property string placeStreet: ""
-  property string placeNumber: ""
   property string placeTown: ""
+  property string placeParked: ""
+
+  readonly property bool usEnglish: {
+    var name = String(Qt.locale().name).replace(/-/g, "_").replace(/\.[^.]+$/, "")
+    return name.indexOf("en_US") === 0 || name.indexOf("en_CA") === 0
+  }
 
   // At speed the nearest address changes every second, so the number is
-  // dropped and only the road is named: "De Hees, Kronenberg" holds still
-  // while "De Hees 39" flickers through the whole street.
+  // dropped and only the road is named. Parked, the script's `place` is the
+  // whole line.
   readonly property string place: {
-    if (placeStreet === "" && placeTown === "") return ""
-    var head = placeStreet
-    if (!driving && placeNumber !== "" && head !== "") head += " " + placeNumber
-    return [head, placeTown].filter(function(part) { return part !== "" }).join(", ")
+    if (driving)
+      return [placeStreet, placeTown].filter(function(part) { return part !== "" }).join(", ")
+    return placeParked
   }
   property string errorText: ""
   // The sentence behind the error, when the script has one. Kept apart so the
@@ -324,12 +328,12 @@ Panel {
           var data = JSON.parse(text)
           var ok = data.ok === true
           root.placeStreet = ok ? (data.street || "") : ""
-          root.placeNumber = ok ? (data.number || "") : ""
           root.placeTown = ok ? (data.town || "") : ""
+          root.placeParked = ok ? (data.place || "") : ""
         } catch (e) {
           root.placeStreet = ""
-          root.placeNumber = ""
           root.placeTown = ""
+          root.placeParked = ""
         }
       }
     }
@@ -445,7 +449,9 @@ Panel {
   // that is usually absent gets read on the day it appears.
   readonly property string openText: {
     if (!hasReading || !reading.open || reading.open.length === 0) return ""
-    var items = reading.open
+    var items = reading.open.map(function(item) {
+      return (root.usEnglish && item === "the boot") ? "the trunk" : item
+    })
     var list = items.length === 1
       ? items[0]
       : items.slice(0, -1).join(", ") + " and " + items[items.length - 1]
@@ -798,7 +804,7 @@ Panel {
         }
 
         Detail {
-          label: "tyres"
+          label: root.usEnglish ? "tires" : "tyres"
           // A range rather than four numbers: what you act on is the lowest
           // one, and what tells you something is wrong is the spread.
           value: {

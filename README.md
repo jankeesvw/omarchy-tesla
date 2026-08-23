@@ -181,7 +181,9 @@ corner of your eye.
 - The street it is on, and one line saying what it is doing and how old the
   whole reading is: `Driving 53 km/h · fetched just now`. Everything on the
   panel came out of that one reading, so one line dates all of it. Parked, the
-  street comes with its house number; moving, it does not, because at speed the
+  street comes with its house number, in the order that country writes it
+  (`1600 Pennsylvania Avenue Northwest, Washington, DC` in the US; `De Hees 39,
+  Kronenberg` in the Netherlands); moving, it does not, because at speed the
   nearest address changes every second and the line flickers through numbers
   nobody is reading.
 - The battery bar with the charge limit notched on it, and under it the
