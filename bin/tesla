@@ -208,8 +208,16 @@ access_token() {
 mint_access_token() {
   local refresh="$1" body response token expires_in new_refresh
 
-  body=$(jq -cn --arg id "$CLIENT_ID" --arg rt "$refresh" --arg scope "$SCOPE" \
-    '{grant_type: "refresh_token", client_id: $id, refresh_token: $rt, scope: $scope}')
+  [ -n "$refresh" ] || return 1
+
+  # The token reaches jq on stdin for the same reason it reaches curl there:
+  # `--arg rt "$refresh"` is an argument, and arguments are public. jq only
+  # lives for a few milliseconds, but that is a window rather than no window,
+  # and it reopens on every refresh. `-R` makes stdin a raw line instead of
+  # JSON, so `input` is the token as a string, quoted by jq exactly as --arg
+  # would have.
+  body=$(printf '%s\n' "$refresh" | jq -cRn --arg id "$CLIENT_ID" --arg scope "$SCOPE" \
+    '{grant_type: "refresh_token", client_id: $id, refresh_token: input, scope: $scope}')
 
   # Same reasoning as `api`, and more of it: this body carries the refresh
   # token, which is the account until it is revoked. It goes in on stdin.
@@ -274,8 +282,16 @@ EOF
   [ -n "$code" ] || die "no code in that address. Paste the whole thing, including the ?code=... part"
 
   local body response refresh
-  body=$(jq -cn --arg id "$CLIENT_ID" --arg code "$code" --arg verifier "$verifier" --arg redirect "$REDIRECT" \
-    '{grant_type: "authorization_code", client_id: $id, code: $code, code_verifier: $verifier, redirect_uri: $redirect}')
+  # Both of these are credentials — together they buy the refresh token — and
+  # both went in as arguments. On stdin instead, a line each, read as a pair so
+  # nothing depends on the order jq happens to evaluate an object in. Neither
+  # can carry a newline: the code is cut out of a single line of input and the
+  # verifier is base64url.
+  body=$(printf '%s\n%s\n' "$code" "$verifier" \
+    | jq -cRn --arg id "$CLIENT_ID" --arg redirect "$REDIRECT" \
+    '[inputs] as $in
+     | {grant_type: "authorization_code", client_id: $id,
+        code: $in[0], code_verifier: $in[1], redirect_uri: $redirect}')
 
   response=$(printf '%s' "$body" | curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
     -H "Content-Type: application/json" \
