@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jankeesvw.tesla",
   "name": "Tesla",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Jankees van Woezik",
   "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
   "homepage": "https://github.com/jankeesvw/omarchy-tesla",
@@ -35,7 +35,7 @@
         "type": "string",
         "label": "VIN",
         "defaultValue": "",
-        "description": "Which car, when the account has more than one. Empty picks the first one Tesla lists, which is the right answer for almost everybody."
+        "description": "Which car is initially selected when the account has more than one. Empty picks the first one Tesla lists. Cars can then be switched from the panel."
       },
       {
         "key": "mapStyle",

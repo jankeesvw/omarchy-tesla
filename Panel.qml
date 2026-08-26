@@ -63,7 +63,8 @@ Panel {
 
   // ----------------------------------------------------------------- settings
 
-  readonly property string vin: setting("vin", "")
+  readonly property string configuredVin: setting("vin", "")
+  property string selectedVin: configuredVin
   readonly property int panelWidth: setting("panelWidth", 380)
   readonly property int mapZoom: setting("mapZoom", 16)
   readonly property string mapStyle: setting("mapStyle", "Auto")
@@ -120,7 +121,7 @@ Panel {
     var base = [root.script,
                 "--park-throttle", String(root.parkThrottleMinutes * 60),
                 "--tile-url", root.tileUrl]
-    if (root.vin !== "") base = base.concat(["--vin", root.vin])
+    if (root.selectedVin !== "") base = base.concat(["--vin", root.selectedVin])
     return base.concat(args)
   }
 
@@ -129,6 +130,10 @@ Panel {
   // What the free poll last said: "online", "asleep", "offline", or "" before
   // the first answer.
   property string carState: ""
+  // `state` supplies these without waking any car, so the selector can be
+  // drawn before a full reading is available.
+  property string selectedCarName: "Tesla"
+  property var availableCars: []
   // The last full reading, from `tesla car`. Null until one lands.
   property var reading: null
   // The tile plan for the position in `reading`.
@@ -198,12 +203,18 @@ Panel {
         } catch (e) {
           return
         }
-        // Read before the ok check, because `car` can succeed at showing you
-        // the last known position and still have something to report about
-        // why it is the last known one.
         root.errorText = data.error || ""
         root.errorHint = data.hint || ""
         if (data.ok !== true) return
+        if (!data.fixture && root.selectedVin !== ""
+            && String(data.vin) !== root.selectedVin) return
+
+        // An empty configured VIN means Tesla's first car. Once it answers,
+        // make that choice explicit so every later request and cache lookup is
+        // tied to the same car.
+        if (root.selectedVin === "") root.selectedVin = String(data.vin)
+        root.selectedCarName = data.name || "Tesla"
+        root.availableCars = data.vehicles || []
 
         var was = root.carState
         root.carState = data.state
@@ -239,6 +250,7 @@ Panel {
         root.errorText = data.error || ""
         root.errorHint = data.hint || ""
         if (data.ok !== true) return
+        if (!data.fixture && data.vin && String(data.vin) !== root.selectedVin) return
         root.reading = data
       }
     }
@@ -248,6 +260,30 @@ Panel {
     if (carProc.running) return
     carProc.command = root.cmd(force ? ["car", "--force"] : ["car"])
     carProc.running = true
+  }
+
+  readonly property bool switchBusy: stateProc.running || carProc.running
+    || wakeProc.running || mapProc.running || placeProc.running
+
+  function selectCar(vin, name) {
+    vin = String(vin || "")
+    if (vin === "" || vin === selectedVin || switchBusy) return
+
+    selectedVin = vin
+    selectedCarName = name || "Tesla"
+    carState = ""
+    reading = null
+    mapPlan = null
+    placeStreet = ""
+    placeNumber = ""
+    placeTown = ""
+    errorText = ""
+    errorHint = ""
+    mapDebounce.stop()
+    placeDebounce.stop()
+
+    stateProc.running = true
+    refresh(false)
   }
 
   // Only while the car is awake on somebody else's account. A parked car gets
@@ -404,19 +440,7 @@ Panel {
   // about when "it is probably still there" turns into "it was there".
   readonly property bool stale: readingAge > 3600
 
-  readonly property string carName: {
-    if (!hasReading) return "Tesla"
-    if (reading.name && reading.name !== "Tesla") return reading.name
-    // Falls back to what the car is rather than a name nobody set: "MODEL S
-    // 100D" beats "TESLA" at the top of a panel about one specific car.
-    var type = String(reading.car_type || "")
-    var model = type.indexOf("models") === 0 ? "Model S"
-              : type.indexOf("modelx") === 0 ? "Model X"
-              : type.indexOf("model3") === 0 ? "Model 3"
-              : type.indexOf("modely") === 0 ? "Model Y"
-              : "Tesla"
-    return reading.trim ? model + " " + String(reading.trim).toUpperCase() : model
-  }
+  readonly property string carName: selectedCarName || "Tesla"
 
   readonly property string stateWord: {
     if (errorText !== "") return errorText
@@ -519,10 +543,10 @@ Panel {
     dimmed: root.asleep || root.errorText !== ""
     tooltipText: {
       if (root.errorText !== "") return root.plain("Dude, where's my car? " + root.errorText)
-      if (!root.hasReading) return "Dude, where's my car?"
-      if (root.driving) return root.plain(root.summary)
-      if (root.place !== "") return root.plain("Parked at " + root.place)
-      return root.plain(root.summary)
+      if (!root.hasReading) return root.plain(root.carName)
+      if (root.driving) return root.plain(root.carName + ": " + root.summary)
+      if (root.place !== "") return root.plain(root.carName + ": parked at " + root.place)
+      return root.plain(root.carName + ": " + root.summary)
     }
 
     onPressed: function(b) {
@@ -563,14 +587,11 @@ Panel {
         width: parent.width
         height: Math.max(title.implicitHeight, badge.height)
 
-        // The plugin is called Tesla everywhere it is listed, because that is
-        // what you look for when you go hunting for it. The joke is here, at
-        // the top of the panel, where it is the actual question being asked.
         PanelSectionHeader {
           id: title
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
-          text: "DUDE, WHERE'S MY CAR?"
+          text: root.carName
           foreground: root.foreground
           fontFamily: root.fontFamily
         }
@@ -609,6 +630,36 @@ Panel {
             font.pixelSize: Style.font.caption
             color: root.foreground
             opacity: 0.7
+          }
+        }
+      }
+
+      Row {
+        id: carSelector
+        visible: root.availableCars.length > 1
+        width: parent.width
+        spacing: Style.space(6)
+
+        readonly property real buttonWidth: root.availableCars.length > 0
+          ? (width - spacing * (root.availableCars.length - 1)) / root.availableCars.length
+          : 0
+
+        Repeater {
+          model: root.availableCars
+
+          Button {
+            required property var modelData
+
+            width: carSelector.buttonWidth
+            text: modelData.name || "Tesla"
+            tooltipText: "VIN " + modelData.vin
+            selected: String(modelData.vin) === root.selectedVin
+            enabled: !root.switchBusy
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            fontSize: Style.font.bodySmall
+            onClicked: root.selectCar(modelData.vin, modelData.name)
           }
         }
       }

@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# tesla: read one Tesla, for the bar widget to call.
+# tesla: read a Tesla, for the bar widget to call.
 #
 # Everything that talks to Tesla is here, so the QML never holds a credential
 # and never decides on its own to touch the car.
@@ -103,14 +103,15 @@ need curl
 need jq
 need awk
 need openssl
+need md5sum
 
 # Both trees are private, and not only for the tokens. The cache is a record
-# of where the car has been: car.json carries the last position, and the
+# of where the cars have been: cars/*.json carries each last position, and the
 # geocode cache spells the coordinates out in its own filenames, so a `ls` of
 # it is a movement log. On a machine with a second account, mode 755 hands
 # that over for the reading. The chmod covers installs that predate this.
-( umask 077; mkdir -p "$CONFIG_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places" )
-chmod 700 "$CONFIG_DIR" "$CACHE_DIR" "$CACHE_DIR/tiles" "$CACHE_DIR/places" 2>/dev/null || true
+( umask 077; mkdir -p "$CONFIG_DIR" "$CACHE_DIR/cars" "$CACHE_DIR/tiles" "$CACHE_DIR/places" )
+chmod 700 "$CONFIG_DIR" "$CACHE_DIR" "$CACHE_DIR/cars" "$CACHE_DIR/tiles" "$CACHE_DIR/places" 2>/dev/null || true
 
 now() { date +%s; }
 
@@ -419,8 +420,8 @@ api_hint() {
 # for it is a round trip the bar would otherwise make every time it polls.
 # `/api/1/vehicles` is the obvious endpoint and Tesla has retired it for owner
 # tokens; `/api/1/products` still answers and carries the same fields.
-vehicle_json() {
-  local cache="$CACHE_DIR/vehicle.json" age response
+vehicle_list_json() {
+  local cache="$CACHE_DIR/vehicles.json" age response vehicles
 
   if [ -r "$cache" ]; then
     age=$(( $(now) - $(stat -c %Y "$cache" 2>/dev/null || echo 0) ))
@@ -429,15 +430,33 @@ vehicle_json() {
 
   response=$(api products) || return 2
   [ -z "$(api_error)" ] || return 3
-  local picked
-  picked=$(printf '%s' "$response" | jq -c --arg vin "$VIN" '
-    [.response[]? | select(.vin != null)]
-    | (if $vin == "" then .[0] else (map(select(.vin == $vin)) | .[0]) end)
+  vehicles=$(printf '%s' "$response" | jq -c '[.response[]? | select(.vin != null)]')
+  [ "$(printf '%s' "$vehicles" | jq -r 'length')" -gt 0 ] || return 1
+  printf '%s' "$vehicles" | write_private "$cache"
+  printf '%s' "$vehicles"
+}
+
+vehicle_json() {
+  local vehicles picked
+  vehicles=$(vehicle_list_json) || return $?
+  picked=$(printf '%s' "$vehicles" | jq -c --arg vin "$VIN" '
+    if $vin == "" then .[0] else (map(select(.vin == $vin)) | .[0]) end
     // empty')
 
   [ -n "$picked" ] || return 1
-  printf '%s' "$picked" | write_private "$cache"
   printf '%s' "$picked"
+}
+
+vehicle_error() {
+  local error
+  error=$(api_error)
+  if [ -n "$error" ]; then printf '%s' "$error"; else printf '%s' "car not found"; fi
+}
+
+vehicle_hint() {
+  local hint
+  hint=$(api_hint)
+  if [ -n "$hint" ]; then printf '%s' "$hint"; else printf '%s' "check that the VIN belongs to this account"; fi
 }
 
 # The state poll. This is the one the bar runs on a timer, and it must stay
@@ -445,13 +464,16 @@ vehicle_json() {
 cmd_state() {
   if has_fixture; then
     jq -c --arg at "$(now)" '{ok: true, at: ($at|tonumber), fixture: true,
-                              state: (.state // "online"), id: "fixture",
-                              vin: (.vin // "FIXTURE"), name: (.name // "Tesla")}' "$(fixture_path)"
+                               state: (.state // "online"), id: "fixture",
+                               vin: (.vin // "FIXTURE"), name: (.name // "Tesla"),
+                               vehicles: [{vin: (.vin // "FIXTURE"),
+                                           name: (.name // "Tesla")}]} ' "$(fixture_path)"
     return 0
   fi
 
-  local vehicle
-  vehicle=$(vehicle_json) || fail_json "$(api_error)" "$(api_hint)"
+  local vehicles vehicle
+  vehicles=$(vehicle_list_json) || fail_json "$(vehicle_error)" "$(vehicle_hint)"
+  vehicle=$(vehicle_json) || fail_json "$(vehicle_error)" "$(vehicle_hint)"
 
   local id state
   id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
@@ -462,10 +484,15 @@ cmd_state() {
   [ -z "$(api_error)" ] || fail_json "$(api_error)" "$(api_hint)"
   [ -n "$state" ] || state=$(printf '%s' "$vehicle" | jq -r '.state // "unknown"')
 
-  jq -cn --argjson v "$vehicle" --arg state "$state" --arg at "$(now)" '
+  jq -cn --argjson v "$vehicle" --argjson vehicles "$vehicles" \
+    --arg state "$state" --arg at "$(now)" '
     {ok: true, state: $state, at: ($at|tonumber),
-     id: ($v.id_s // ($v.id|tostring)), vin: $v.vin,
-     name: (if ($v.display_name // "") == "" then "Tesla" else $v.display_name end)}'
+      id: ($v.id_s // ($v.id|tostring)), vin: $v.vin,
+      name: (if ($v.display_name // "") == "" then "Tesla" else $v.display_name end),
+      vehicles: ($vehicles | map({
+        vin: .vin,
+        name: (if (.display_name // "") == "" then "Tesla" else .display_name end)
+      }))}'
 }
 
 # ------------------------------------------------------------------ readings
@@ -572,6 +599,27 @@ reading_json() {
 # asking the car is even possible. Then the throttle, because a parked car
 # that answered ten minutes ago has not moved and does not need asking again.
 # Only then the expensive call.
+car_cache_path() {
+  local vehicle="$1" vin key
+  vin=$(printf '%s' "$vehicle" | jq -r '.vin // empty')
+  key=$(printf '%s' "$vin" | md5sum | awk '{print $1}')
+  printf '%s/cars/%s.json' "$CACHE_DIR" "$key"
+}
+
+read_car_cache() {
+  local vehicle="$1" cache legacy="$CACHE_DIR/car.json" vin legacy_vin
+  cache=$(car_cache_path "$vehicle")
+  if [ -r "$cache" ]; then cat "$cache"; return 0; fi
+
+  # Keep the last reading from pre-multi-car installs, but only for the VIN it
+  # actually belongs to, until a fresh reading replaces it in the new cache.
+  [ -r "$legacy" ] || return 1
+  vin=$(printf '%s' "$vehicle" | jq -r '.vin // empty')
+  legacy_vin=$(jq -r '.vin // empty' "$legacy" 2>/dev/null)
+  [ -n "$vin" ] && [ "$legacy_vin" = "$vin" ] || return 1
+  cat "$legacy"
+}
+
 cmd_car() {
   if has_fixture; then
     serve_fixture
@@ -579,16 +627,15 @@ cmd_car() {
   fi
 
   local vehicle
-  vehicle=$(vehicle_json) || serve_cache_or_fail
+  vehicle=$(vehicle_json) || fail_json "$(vehicle_error)" "$(vehicle_hint)"
 
   local id cache state cached
   id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
-  cache="$CACHE_DIR/car.json"
-  cached=""
-  [ -r "$cache" ] && cached=$(cat "$cache")
+  cache=$(car_cache_path "$vehicle")
+  cached=$(read_car_cache "$vehicle") || cached=""
 
   state=$(api "vehicles/$id" | jq -r '.response.state // empty' 2>/dev/null)
-  [ -z "$(api_error)" ] || serve_cache_or_fail
+  [ -z "$(api_error)" ] || serve_cache_or_fail "$vehicle"
   [ -n "$state" ] || state=$(printf '%s' "$vehicle" | jq -r '.state // "unknown"')
 
   # Asleep or offline: the reading on disk is the only answer there is, and it
@@ -643,8 +690,8 @@ cmd_car() {
 # The last reading goes out with the complaint attached, so the panel can show
 # both rather than going blank about a car parked in a perfectly known place.
 serve_cache_or_fail() {
-  local cached=""
-  [ -r "$CACHE_DIR/car.json" ] && cached=$(cat "$CACHE_DIR/car.json")
+  local vehicle="$1" cached=""
+  cached=$(read_car_cache "$vehicle") || cached=""
 
   if [ -z "$cached" ]; then
     fail_json "$(api_error)" "$(api_hint)"
@@ -825,7 +872,7 @@ cmd_place() {
 
 usage() {
   cat <<'EOF'
-tesla: read one Tesla, without keeping it awake.
+tesla: read your Teslas, without keeping them awake.
 
   token                     paste a refresh token from a token app. The easy way
   login                     sign in through the browser instead. Needs devtools
