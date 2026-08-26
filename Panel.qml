@@ -453,6 +453,33 @@ Panel {
       + (items.length === 1 ? " is open" : " are open")
   }
 
+  // Where it is going, when it is going somewhere. A route set on a parked car
+  // is not a journey, so this only speaks while the car is moving; the rest of
+  // the time the panel has nothing to say about the future and says nothing.
+  readonly property bool navigating:
+    driving && hasReading && reading.destination && reading.eta
+
+  // The locale's own short time, with the seconds taken out of the pattern
+  // rather than out of the string: some locales put them in ShortFormat and
+  // some do not, and an arrival is not a number you read to the second. Taking
+  // them from the pattern leaves everything else the locale asked for, the
+  // twelve-hour clock and its AM included.
+  readonly property string clockFormat:
+    Qt.locale().timeFormat(Locale.ShortFormat).replace(/[.:]?\bs+\b/g, "")
+
+  // "Home at 19:48 · 2.6 km". The clock time rather than "in six
+  // minutes", because arriving is something you meet the car at, and a time is
+  // what you compare against the one on your own wrist.
+  readonly property string etaText: {
+    if (!navigating) return ""
+    var parts = [reading.destination + " at "
+                 + Qt.formatTime(new Date(reading.eta * 1000), clockFormat)]
+    if (reading.eta_distance !== null && reading.eta_distance !== undefined)
+      parts.push(reading.eta_distance + " " + reading.range_unit)
+    if (reading.eta_delay) parts.push(reading.eta_delay + " min of traffic")
+    return parts.join(" · ")
+  }
+
   readonly property string barSpeed:
     driving && reading.speed !== null ? reading.speed + " " + reading.speed_unit : ""
 
@@ -655,6 +682,20 @@ Panel {
           font.family: root.fontFamily
           font.pixelSize: Style.font.body
           color: root.foreground
+        }
+
+        // Above the summary rather than below it: the summary ends in how old
+        // the reading is, which is the last thing on the panel worth reading
+        // and so belongs last.
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          visible: root.etaText !== ""
+          text: root.etaText
+          elide: Text.ElideRight
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          color: root.liveAccent
         }
 
         Text {
@@ -981,12 +1022,27 @@ Panel {
       return "driving " + speed + " " + next.speed_unit + " heading " + heading
     }
 
+    // A route on top of whatever the panel is showing. Only visible while the
+    // car is driving, so this is `drive` and then this, in that order.
+    function navigate(destination: string, minutes: int): string {
+      if (!root.hasReading) return "no reading to navigate from yet"
+      var next = JSON.parse(JSON.stringify(root.reading))
+      next.destination = destination
+      next.eta = Math.round(Date.now() / 1000) + minutes * 60
+      next.at = Math.round(Date.now() / 1000)
+      root.carState = "online"
+      root.reading = next
+      return "arriving at " + destination + " in " + minutes + " minutes"
+    }
+
     function park(): string {
       if (!root.hasReading) return "no reading to park yet"
       var next = JSON.parse(JSON.stringify(root.reading))
       next.driving = false
       next.shift = "P"
       next.speed = null
+      next.destination = null
+      next.eta = null
       next.at = Math.round(Date.now() / 1000)
       root.carState = "online"
       root.reading = next

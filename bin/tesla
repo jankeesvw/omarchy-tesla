@@ -153,8 +153,16 @@ fixture_path() { printf '%s' "$CONFIG_DIR/fixture.json"; }
 
 has_fixture() { [ -s "$(fixture_path)" ]; }
 
+# The arrival time moves with the timestamp for the same reason the timestamp
+# is restamped at all: a fixture written twenty minutes ago is not a car that
+# arrived fifteen minutes ago, it is a car that is still four minutes out. Both
+# are held where they were written, so a saved drive stays a drive.
 serve_fixture() {
-  jq -c --arg at "$(now)" '. + {at: ($at|tonumber), fixture: true}' "$(fixture_path)"
+  jq -c --arg at "$(now)" '
+    ($at|tonumber) as $now
+    | (if .at == null then 0 else $now - .at end) as $shift
+    | . + {at: $now, fixture: true}
+    | if .eta == null then . else .eta += $shift end' "$(fixture_path)"
 }
 
 # ------------------------------------------------------------------- secrets
@@ -513,6 +521,24 @@ reading_json() {
        driving: (($r.drive_state.shift_state // "P") != "P" and ($r.drive_state.shift_state // null) != null),
        speed: (if $r.drive_state.speed == null then null else ($r.drive_state.speed * $k | round) end),
        speed_unit: $speed,
+       # Where it is going, when navigation is running. Absent the rest of the
+       # time, and absent is the answer: a car with no route set has no
+       # destination to name. The arrival time is worked out here rather than
+       # in the panel, because the panel would be adding "six minutes" to the
+       # clock on the wall while the reading it came from was already a minute
+       # old, and an eta that drifts later every time you look at it is worse
+       # than none. Distance comes over the wire in miles whatever the car is
+       # set to, the same as everything else, so it converts like the rest.
+       destination: (($r.drive_state.active_route_destination // "")
+                     | if . == "" then null else . end),
+       eta: (if $r.drive_state.active_route_minutes_to_arrival == null then null
+             else (($at|tonumber)
+                   + ($r.drive_state.active_route_minutes_to_arrival * 60) | round) end),
+       eta_distance: (if $r.drive_state.active_route_miles_to_arrival == null then null
+                      else ($r.drive_state.active_route_miles_to_arrival * $k * 10 | round / 10) end),
+       # A delay under a minute is not a delay, it is rounding.
+       eta_delay: (($r.drive_state.active_route_traffic_minutes_delay // 0)
+                   | if . < 1 then null else round end),
        battery: $r.charge_state.battery_level,
        battery_usable: $r.charge_state.usable_battery_level,
        charge_limit: $r.charge_state.charge_limit_soc,

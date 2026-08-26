@@ -184,6 +184,12 @@ corner of your eye.
   street comes with its house number; moving, it does not, because at speed the
   nearest address changes every second and the line flickers through numbers
   nobody is reading.
+- While it is driving somewhere, one line for where somewhere is and when it
+  gets there: `Home at 19:48 · 2.6 km`. A clock time rather than a countdown,
+  because arriving is something you meet the car at, and to the minute rather
+  than the second, which is not a thing anybody meets anything at. Traffic
+  joins the line when it costs a minute or more. No route set, or parked, and
+  the line is not there.
 - The battery bar with the charge limit notched on it, and under it the
   percentage and the remaining range.
 - Ten things you end up looking up: whether it is locked, whether sentry mode
@@ -283,6 +289,7 @@ Synthetic input does not reach the shell, so there is an IPC hook instead:
 
 ```bash
 omarchy-shell jankeesvw.tesla.test drive 87 243   # moving at 87, heading WSW
+omarchy-shell jankeesvw.tesla.test navigate "Home" 6
 omarchy-shell jankeesvw.tesla.test park
 omarchy-shell jankeesvw.tesla.test sleep
 omarchy-shell jankeesvw.tesla.test live           # back to the real car
@@ -293,7 +300,10 @@ in `~/.config/omarchy-tesla/fixture.json` and `tesla state` and `tesla car`
 serve that and never call Tesla at all. The panel behaves exactly as it does
 with a real car, but the car stops moving underneath you between restarts.
 `tesla car > ~/.config/omarchy-tesla/fixture.json` makes one from whatever the
-car is doing now; delete the file to go back to it. The screenshot above is a
+car is doing now; delete the file to go back to it. A fixture taken mid-drive
+keeps driving: the timestamp and the arrival time are both moved forward by
+however long ago it was written, so a car saved four minutes from home stays
+four minutes from home. The screenshot above is a
 fixture, which is also how it manages to be somewhere other than my driveway.
 
 ## Which cars this works with
