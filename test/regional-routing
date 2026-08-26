@@ -1,0 +1,84 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TESLA="$ROOT/bin/tesla"
+TEST_TMP=$(mktemp -d)
+trap 'rm -rf -- "$TEST_TMP"' EXIT
+
+mkdir -p "$TEST_TMP/bin"
+ln -s "$ROOT/test/mock-curl" "$TEST_TMP/bin/curl"
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+jwt() {
+  local issuer="$1" payload
+  payload=$(jq -cn --arg issuer "$issuer" '{iss: $issuer}' \
+    | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  printf 'e30.%s.test-signature' "$payload"
+}
+
+run_region() {
+  local name="$1" issuer="$2" auth="$3" owner_api="$4"
+  local config="$TEST_TMP/$name/config" cache="$TEST_TMP/$name/cache"
+  local log="$TEST_TMP/$name/curl.log" refresh access output
+
+  mkdir -p "$config" "$cache"
+  : > "$log"
+  refresh=$(jwt "$issuer")
+  access=$(jwt "$issuer")
+
+  printf '%s\n' "$refresh" | env \
+    PATH="$TEST_TMP/bin:$PATH" \
+    OMARCHY_TESLA_CONFIG_DIR="$config" \
+    OMARCHY_TESLA_CACHE_DIR="$cache" \
+    MOCK_CURL_LOG="$log" \
+    MOCK_ACCESS_TOKEN="$access" \
+    MOCK_REFRESH_TOKEN="$refresh" \
+    "$TESLA" token >/dev/null
+
+  grep -Fxq "$auth/oauth2/v3/token" "$log" \
+    || fail "$name refresh did not use $auth"
+  [ "$(stat -c %a "$config/refresh-token")" = 600 ] \
+    || fail "$name refresh token is not mode 600"
+  [ "$(stat -c %a "$config/access-token")" = 600 ] \
+    || fail "$name access token is not mode 600"
+  grep -Fq "$refresh" "$log" \
+    && fail "$name refresh token appeared in curl arguments"
+
+  : > "$log"
+  output=$(env \
+    PATH="$TEST_TMP/bin:$PATH" \
+    OMARCHY_TESLA_CONFIG_DIR="$config" \
+    OMARCHY_TESLA_CACHE_DIR="$cache" \
+    MOCK_CURL_LOG="$log" \
+    MOCK_ACCESS_TOKEN="$access" \
+    MOCK_REFRESH_TOKEN="$refresh" \
+    "$TESLA" state)
+
+  [ "$(printf '%s' "$output" | jq -r '.ok')" = true ] \
+    || fail "$name state request failed"
+  [ "$(printf '%s' "$output" | jq -r '.state')" = offline ] \
+    || fail "$name state was not parsed"
+  grep -Fxq "$owner_api/api/1/products" "$log" \
+    || fail "$name products request did not use $owner_api"
+  grep -Fxq "$owner_api/api/1/vehicles/1" "$log" \
+    || fail "$name vehicle request did not use $owner_api"
+  grep -Fq "$access" "$log" \
+    && fail "$name access token appeared in curl arguments"
+
+  printf 'ok - %s routing\n' "$name"
+}
+
+run_region global "https://auth.tesla.com/oauth2/v3" \
+  "https://auth.tesla.com" "https://owner-api.teslamotors.com"
+run_region china "https://auth.tesla.cn/oauth2/v3" \
+  "https://auth.tesla.cn" "https://owner-api.vn.cloud.tesla.cn"
+run_region untrusted-issuer "https://attacker.invalid/oauth2/v3" \
+  "https://auth.tesla.com" "https://owner-api.teslamotors.com"
+
+printf 'regional routing tests passed\n'
