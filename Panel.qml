@@ -279,8 +279,8 @@ Panel {
     reading = null
     mapPlan = null
     placeStreet = ""
-    placeNumber = ""
     placeTown = ""
+    placeParked = ""
     errorText = ""
     errorHint = ""
     mapDebounce.stop()
@@ -444,7 +444,23 @@ Panel {
   // about when "it is probably still there" turns into "it was there".
   readonly property bool stale: readingAge > 3600
 
-  readonly property string carName: selectedCarName || "Tesla"
+  // The name Tesla has on file, when somebody set one. Otherwise what the car
+  // is rather than a name nobody chose: "MODEL S 100D" beats "TESLA" for a car
+  // that was never named. `state` supplies the name before any reading lands,
+  // so the selector can be drawn without waking anything; the reading is what
+  // knows the model, so it refines the answer once it arrives.
+  readonly property string carName: {
+    if (selectedCarName !== "" && selectedCarName !== "Tesla") return selectedCarName
+    if (!hasReading) return selectedCarName || "Tesla"
+    if (reading.name && reading.name !== "Tesla") return reading.name
+    var type = String(reading.car_type || "")
+    var model = type.indexOf("models") === 0 ? "Model S"
+              : type.indexOf("modelx") === 0 ? "Model X"
+              : type.indexOf("model3") === 0 ? "Model 3"
+              : type.indexOf("modely") === 0 ? "Model Y"
+              : "Tesla"
+    return reading.trim ? model + " " + String(reading.trim).toUpperCase() : model
+  }
 
   readonly property string stateWord: {
     if (errorText !== "") return errorText
@@ -593,11 +609,16 @@ Panel {
         width: parent.width
         height: Math.max(title.implicitHeight, badge.height)
 
+        // The plugin is called Tesla everywhere it is listed, because that is
+        // what you look for when you go hunting for it. The joke is here, at
+        // the top of the panel, where it is the actual question being asked.
+        // Which car it is about is the selector's job, and the selector is
+        // only there when the answer is not obvious.
         PanelSectionHeader {
           id: title
           anchors.left: parent.left
           anchors.verticalCenter: parent.verticalCenter
-          text: root.carName
+          text: "DUDE, WHERE'S MY CAR?"
           foreground: root.foreground
           fontFamily: root.fontFamily
         }
