@@ -1,8 +1,8 @@
 # Tesla
 
-An [Omarchy](https://omarchy.org) bar widget for a Tesla. The bar shows the
+An [Omarchy](https://omarchy.org) bar widget for your Teslas. The bar shows the
 Tesla mark and nothing else. Click it and a panel comes down with a map of
-where the car is, which way it is pointing, how full the battery is, how far
+where the selected car is, which way it is pointing, how full the battery is, how far
 that gets you, and the handful of things you actually end up wondering about a
 parked car.
 
@@ -179,6 +179,8 @@ corner of your eye.
 
 **In the panel**, top to bottom:
 
+- The car's name. Accounts with more than one car also get a row of car buttons;
+  each button switches the panel to that VIN without changing the saved default.
 - A map centred on the car, with it drawn as an arrow pointing the way it is
   facing, the same heading the Tesla app shows under Location. The marker
   pulses while it is moving.
@@ -258,7 +260,7 @@ secrets somewhere else.
 
 | Setting | Default | What it does |
 | --- | --- | --- |
-| VIN | empty | Which car, when the account has more than one. Empty takes the first. |
+| VIN | empty | Which car is initially selected. Empty takes the first; switch cars in the panel. |
 | Map | Auto | Follows the theme. Or force CARTO dark, CARTO light, or OpenStreetMap's own tiles. |
 | Zoom | 16 | 16 shows the street and its neighbours. Lower for which town, higher for which parking space. |
 | Panel width | 380 | Sizes the whole panel; everything else is measured off the map. |
