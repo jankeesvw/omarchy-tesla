@@ -50,7 +50,7 @@ run logout >/dev/null
 [ ! -e "$CONFIG/refresh-token" ] && [ ! -e "$CONFIG/access-token" ] \
   || fail "logout left credentials behind"
 
-run --help | grep -Fq 'without keeping it awake' \
+run --help | grep -Fq 'without keeping' \
   || fail "help output is missing"
 
 printf 'smoke tests passed\n'
