@@ -58,6 +58,10 @@ Then paste the **refresh** token in:
 It spends the token on an access token there and then, so if it says you are
 signed in, you are.
 
+China-region accounts are detected from the token issuer automatically. Their
+tokens are refreshed through `auth.tesla.cn` and their car data is read from
+Tesla's China Owner API; no region setting is needed.
+
 There is also `tesla login`, which runs the whole browser flow itself. It works,
 but Tesla has taken `https://auth.tesla.com/void/callback` off the allowlist for
 the `ownerapi` client, so the only accepted redirect left is `tesla://auth/callback`

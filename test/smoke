@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TESLA="$ROOT/bin/tesla"
+TEST_TMP=$(mktemp -d)
+trap 'rm -rf -- "$TEST_TMP"' EXIT
+
+CONFIG="$TEST_TMP/config"
+CACHE="$TEST_TMP/cache"
+mkdir -p "$CONFIG" "$CACHE"
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+run() {
+  env OMARCHY_TESLA_CONFIG_DIR="$CONFIG" OMARCHY_TESLA_CACHE_DIR="$CACHE" \
+    "$TESLA" "$@"
+}
+
+jq -cn '{state: "offline", name: "Fixture", battery: 50, at: 1}' \
+  > "$CONFIG/fixture.json"
+
+output=$(run state)
+[ "$(printf '%s' "$output" | jq -r '.ok')" = true ] \
+  || fail "fixture state failed"
+[ "$(printf '%s' "$output" | jq -r '.fixture')" = true ] \
+  || fail "fixture state was not marked"
+
+output=$(run car)
+[ "$(printf '%s' "$output" | jq -r '.fixture')" = true ] \
+  || fail "fixture car failed"
+[ "$(printf '%s' "$output" | jq -r '.battery')" = 50 ] \
+  || fail "fixture car data changed"
+
+output=$(run map not-a-number 0 1 256 256)
+[ "$(printf '%s' "$output" | jq -r '.error')" = "map wants numbers" ] \
+  || fail "invalid map input was not rejected"
+
+output=$(run place not-a-number 0)
+[ "$(printf '%s' "$output" | jq -r '.error')" = "place wants numbers" ] \
+  || fail "invalid place input was not rejected"
+
+printf 'fake-refresh\n' > "$CONFIG/refresh-token"
+printf 'fake-access\n' > "$CONFIG/access-token"
+run logout >/dev/null
+[ ! -e "$CONFIG/refresh-token" ] && [ ! -e "$CONFIG/access-token" ] \
+  || fail "logout left credentials behind"
+
+run --help | grep -Fq 'without keeping it awake' \
+  || fail "help output is missing"
+
+printf 'smoke tests passed\n'

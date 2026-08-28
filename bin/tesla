@@ -30,7 +30,9 @@
 set -uo pipefail
 
 readonly OWNER_API="https://owner-api.teslamotors.com/api/1"
+readonly OWNER_API_CN="https://owner-api.vn.cloud.tesla.cn/api/1"
 readonly AUTH="https://auth.tesla.com/oauth2/v3"
+readonly AUTH_CN="https://auth.tesla.cn/oauth2/v3"
 readonly CLIENT_ID="ownerapi"
 # Tesla took https://auth.tesla.com/void/callback off the allowlist for
 # client_id=ownerapi; the authorize call now 403s before the login form is even
@@ -191,6 +193,51 @@ refresh_token() {
   read_first_line "$CONFIG_DIR/refresh-token"
 }
 
+# Read only the issuer needed for regional routing. JWT claims are untrusted,
+# so callers below use this solely to choose between hard-coded Tesla hosts.
+jwt_issuer() {
+  local token="$1" payload padding
+
+  payload=${token#*.}
+  [ "$payload" != "$token" ] || return 1
+  payload=${payload%%.*}
+  case "$payload" in ''|*[!A-Za-z0-9_-]*) return 1 ;; esac
+
+  case $((${#payload} % 4)) in
+    0) padding="" ;;
+    2) padding="==" ;;
+    3) padding="=" ;;
+    *) return 1 ;;
+  esac
+
+  printf '%s%s' "$payload" "$padding" | tr '_-' '/+' \
+    | openssl base64 -d -A 2>/dev/null \
+    | jq -er '.iss | strings | select(length > 0)' 2>/dev/null
+}
+
+# Refresh tokens are issuer-bound. China-region accounts receive tokens from
+# auth.tesla.cn, and that endpoint—not auth.tesla.com—must mint their access
+# tokens.
+auth_for_refresh_token() {
+  local issuer
+  issuer=$(jwt_issuer "$1") || issuer=""
+
+  case "$issuer" in
+    https://auth.tesla.cn/oauth2/v3) printf '%s' "$AUTH_CN" ;;
+    *) printf '%s' "$AUTH" ;;
+  esac
+}
+
+owner_api_for_access_token() {
+  local issuer
+  issuer=$(jwt_issuer "$1") || issuer=""
+
+  case "$issuer" in
+    https://auth.tesla.cn/oauth2/v3) printf '%s' "$OWNER_API_CN" ;;
+    *) printf '%s' "$OWNER_API" ;;
+  esac
+}
+
 # Refreshes when there is less than a minute left rather than at the moment of
 # expiry: a request that starts valid can still arrive expired.
 access_token() {
@@ -214,9 +261,10 @@ access_token() {
 # Tesla rotates the refresh token on some responses and dropping the new one
 # means the next refresh fails.
 mint_access_token() {
-  local refresh="$1" body response token expires_in new_refresh
+  local refresh="$1" auth body response token expires_in new_refresh
 
   [ -n "$refresh" ] || return 1
+  auth=$(auth_for_refresh_token "$refresh")
 
   # The token reaches jq on stdin for the same reason it reaches curl there:
   # `--arg rt "$refresh"` is an argument, and arguments are public. jq only
@@ -229,7 +277,7 @@ mint_access_token() {
 
   # Same reasoning as `api`, and more of it: this body carries the refresh
   # token, which is the account until it is revoked. It goes in on stdin.
-  response=$(printf '%s' "$body" | curl -sS $TLS_PIN -m 30 -X POST "$AUTH/token" \
+  response=$(printf '%s' "$body" | curl -sS $TLS_PIN -m 30 -X POST "$auth/token" \
     -H "Content-Type: application/json" \
     -H "User-Agent: $APP_UA" -H "X-Tesla-User-Agent: $APP_TAG" \
     --data-binary @- 2>/dev/null) || return 1
@@ -364,10 +412,11 @@ readonly API_ERROR_FILE="$CACHE_DIR/.last-error"
 api_error() { cat "$API_ERROR_FILE" 2>/dev/null; }
 
 api() {
-  local path="$1" method="${2:-GET}" token body
+  local path="$1" method="${2:-GET}" token owner_api body
   : > "$API_ERROR_FILE"
 
   token=$(access_token) || { printf 'not signed in' > "$API_ERROR_FILE"; return 2; }
+  owner_api=$(owner_api_for_access_token "$token")
 
   # A quote or a backslash would end the --config line early and turn the rest
   # of the token into curl options. Tesla's tokens are base64url and contain
@@ -387,7 +436,7 @@ api() {
     -H "User-Agent: $APP_UA" \
     -H "X-Tesla-User-Agent: $APP_TAG" \
     -H "Accept: application/json" \
-    "$OWNER_API/$path" 2>/dev/null) || { printf 'cannot reach Tesla' > "$API_ERROR_FILE"; return 1; }
+    "$owner_api/$path" 2>/dev/null) || { printf 'cannot reach Tesla' > "$API_ERROR_FILE"; return 1; }
 
   # Tesla says no in JSON, so an error body still parses and still has to be
   # noticed. Reading past it is how a widget ends up cheerfully reporting a

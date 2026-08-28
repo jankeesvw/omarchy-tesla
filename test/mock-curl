@@ -1,0 +1,34 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+url=""
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$MOCK_CURL_LOG"
+  case "$arg" in
+    https://*) url="$arg" ;;
+  esac
+done
+
+# Consume request bodies and curl config from stdin without recording either:
+# both contain credentials in the real client.
+if [ ! -t 0 ]; then
+  while IFS= read -r _; do :; done
+fi
+
+case "$url" in
+  */oauth2/v3/token)
+    jq -cn --arg access "$MOCK_ACCESS_TOKEN" --arg refresh "$MOCK_REFRESH_TOKEN" \
+      '{access_token: $access, refresh_token: $refresh, expires_in: 28800}'
+    ;;
+  */api/1/products)
+    jq -cn '{response: [{id: 1, id_s: "1", vin: "TESTVIN", state: "offline"}]}'
+    ;;
+  */api/1/vehicles/1)
+    jq -cn '{response: {state: "offline"}}'
+    ;;
+  *)
+    printf 'unexpected mock curl URL: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac
