@@ -1,0 +1,13 @@
+{
+  "display_name": "leak-display",
+  "address": {
+    "house_number": "12",
+    "road": "Venweg",
+    "village": "Kronenberg",
+    "country_code": "nl",
+    "ISO3166-2-lvl4": "NL-LI",
+    "postcode": "leak-postcode",
+    "county": "leak-county",
+    "country": "leak-country"
+  }
+}

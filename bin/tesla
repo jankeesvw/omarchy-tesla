@@ -74,6 +74,13 @@ readonly TLS_PIN="--tlsv1.3"
 CONFIG_DIR="${OMARCHY_TESLA_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/omarchy-tesla}"
 CACHE_DIR="${OMARCHY_TESLA_CACHE_DIR:-${XDG_CACHE_HOME:-$HOME/.cache}/omarchy-tesla}"
 
+# Plugin files sit next to this script. The panel runs us by absolute path, so
+# cwd is not the plugin dir.
+here=$(cd "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
+PLACE_JQ="$here/place.jq"
+# Cache files from before country-aware formatting lack number_first.
+PLACE_CACHE_USABLE='.ok == true and (.number_first | type == "boolean")'
+
 # Seconds a parked, awake car is left alone between readings. Tesla needs
 # roughly a quarter of an hour of quiet before it sleeps, so anything shorter
 # than this would hold it awake forever.
@@ -176,6 +183,13 @@ serve_fixture() {
 write_private() {
   local path="$1"
   ( umask 077; cat > "$path" )
+}
+
+# A place-cache file is usable only when it was written by place.jq.
+# jq -e prints true/false; discard that or a cache hit becomes two lines.
+place_cache_usable() {
+  [ -s "$1" ] || return 1
+  jq -e "$PLACE_CACHE_USABLE" "$1" >/dev/null 2>&1
 }
 
 read_first_line() {
@@ -876,9 +890,14 @@ fetch_tile() {
 # Where the car is, in words. Nominatim asks for no more than one call a
 # second and would rather you cached; coordinates are rounded to about ten
 # metres first, so a car sitting still is one lookup however often you look.
+#
+# Formatting lives in place.jq, next to this script: country of the pin
+# decides number-first vs number-last, and US/CA/AU get a region suffix.
+# The parked line is `place`. The panel drops the house number on screen
+# while moving; this cache is keyed by coordinates, so it does not change.
 cmd_place() {
   local lat="$1" lon="$2"
-  local key path response
+  local key path response formatted
 
   # Same check `map` makes. These are pasted straight into a query string, and
   # a coordinate that is not a number is not a coordinate.
@@ -889,31 +908,17 @@ cmd_place() {
   key=$(awk -v a="$lat" -v b="$lon" 'BEGIN { printf "%.4f_%.4f", a, b }')
   path="$CACHE_DIR/places/$key.json"
 
-  if [ -s "$path" ]; then cat "$path"; return 0; fi
+  if place_cache_usable "$path"; then cat "$path"; return 0; fi
+
+  [ -f "$PLACE_JQ" ] || fail_json "no address" "place.jq is missing next to bin/tesla"
 
   response=$(curl -sS -f -m 20 -A "$MAP_UA" \
     "https://nominatim.openstreetmap.org/reverse?format=jsonv2&zoom=18&lat=$lat&lon=$lon" 2>/dev/null) \
     || fail_json "no address"
 
-  # A street and a town is what you want to read; the full display_name is a
-  # paragraph ending in the country you are standing in.
-  #
-  # The house number comes back on its own as well as folded into `place`,
-  # because it is worth having when the car is parked and noise when it is
-  # moving: at speed the nearest address changes every second and the line
-  # flickers through numbers nobody is reading.
-  printf '%s' "$response" | jq -c '
-    .address as $a
-    | ($a.road // $a.pedestrian // $a.footway // "") as $road
-    | ($a.house_number // "") as $number
-    | ($a.village // $a.town // $a.city // $a.suburb // $a.municipality // "") as $town
-    | {ok: true,
-       street: $road,
-       number: $number,
-       town: $town,
-       place: ([[$road, $number] | map(select(. != "")) | join(" "), $town]
-               | map(select(. != "")) | join(", "))}' | write_private "$path"
-
+  formatted=$(printf '%s' "$response" | jq -c -f "$PLACE_JQ") || fail_json "no address"
+  [ -n "$formatted" ] || fail_json "no address"
+  printf '%s' "$formatted" | write_private "$path"
   cat "$path"
 }
 
