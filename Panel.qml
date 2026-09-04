@@ -535,15 +535,40 @@ Panel {
   // beside it while the car was moving, which made the bar shuffle every time
   // a car pulled away. A lot of movement in the corner of your eye to say
   // something the panel says better. The colour carries it instead.
-  implicitWidth: button.implicitWidth
+  // The remaining range as the bar item, as "183", in the same cell style the
+  // shell's battery widget uses for its percentage. The unit is in the tooltip
+  // and in the panel: the bar is for the number you glance at, and "183 mi" in
+  // a bar is two things to read where one would do.
+  //
+  // It costs the car nothing. This is the last reading the panel already holds,
+  // not another question asked of it, so the sleep policy is untouched — the
+  // number simply ages along with everything else the panel is showing.
+  // `showRange` off restores the bare mark.
+  readonly property bool showRange: setting("showRange", true)
+  readonly property string barRange:
+    showRange && hasReading && reading.range !== null && reading.range !== undefined
+      ? String(Math.round(reading.range))
+      : ""
+
+  implicitWidth: barRow.implicitWidth
   implicitHeight: button.implicitHeight
 
-  BarIconButton {
-    id: button
+  Row {
+    id: barRow
     anchors.left: parent.left
     anchors.top: parent.top
     anchors.bottom: parent.bottom
+    spacing: 0
+
+  BarIconButton {
+    id: button
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
     bar: root.bar
+    // The number is the widget. The mark only stands in while there is no
+    // reading to show — first start, or signed out — so there is always
+    // something in the bar to click.
+    visible: root.barRange === ""
 
     iconComponent: Component {
       TeslaMark {
@@ -580,11 +605,31 @@ Panel {
     }
   }
 
+  // The number. Same colour rules as the mark so the two read as one widget:
+  // green while driving, dimmed while asleep. Its own cell rather than text
+  // inside the icon slot because the mark is a Shape, not a glyph, and the
+  // shell's icon button only knows how to typeset one or the other.
+  WidgetButton {
+    id: rangeLabel
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    bar: root.bar
+    text: root.barRange
+    fontSize: Style.font.bodySmall
+    horizontalMargin: 6
+    active: root.driving
+    activeColor: root.liveGreen
+    dimmed: root.asleep || root.errorText !== ""
+    tooltipText: button.tooltipText
+    onPressed: function(b) { button.pressed(b) }
+  }
+  }
+
   // ------------------------------------------------------------------- panel
 
   PopupCard {
     id: popup
-    anchorItem: button
+    anchorItem: root.barRange !== "" ? rangeLabel : button
     bar: root.bar
     owner: root
     open: root.opened
