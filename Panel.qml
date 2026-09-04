@@ -66,6 +66,11 @@ Panel {
   readonly property string configuredVin: setting("vin", "")
   property string selectedVin: configuredVin
   readonly property int panelWidth: setting("panelWidth", 380)
+  // How many columns the panel is laid out in. Two by default: stacked, this
+  // panel is taller than a 1080p screen, so the controls sit below the fold and
+  // the answer to "is it locked" costs a scroll. One restores the original
+  // stacked panel for narrow screens and vertical bars.
+  readonly property int panelColumns: Math.max(1, Math.min(2, setting("panelColumns", 2)))
   readonly property int mapZoom: setting("mapZoom", 16)
   readonly property string mapStyle: setting("mapStyle", "Auto")
   readonly property int statePollMinutes: setting("statePollMinutes", 5)
@@ -804,713 +809,745 @@ Panel {
     // car for a reading, so it should happen because you meant it rather than
     // because the cursor crossed the bar.
     triggerMode: "click"
-    contentWidth: popup.fittedContentWidth(Style.space(root.panelWidth))
+    contentWidth: popup.fittedContentWidth(
+      Style.space(root.panelWidth) * root.panelColumns
+      + Style.space(16) * (root.panelColumns - 1))
     contentHeight: popup.fittedContentHeight(content.implicitHeight)
 
-    Column {
+    Grid {
       id: content
       anchors.fill: parent
-      // Generous on purpose. This panel is read in glances rather than
-      // scanned, and every section in it answers a different question, so
-      // they want visible daylight between them rather than a tidy list.
-      spacing: Style.space(12)
+      // One column is the original panel, stacked the way it has always been.
+      // Two puts the readings beside the controls, which is the whole point:
+      // at one column this panel is taller than a 1080p screen, so the half
+      // you came for is the half below the fold.
+      columns: root.panelColumns
+      columnSpacing: Style.space(16)
+      rowSpacing: Style.space(12)
 
-      // ------------------------------------------------------------- header
+      readonly property real columnWidth:
+        Math.floor((width - columnSpacing * (columns - 1)) / columns)
 
-      Item {
-        width: parent.width
-        height: Math.max(title.implicitHeight, badge.height)
+      Column {
+        id: contentLeft
+        // Shared out of the width the card actually gave us, rather than the
+        // width we asked for: the card keeps padding of its own, so a column
+        // sized to the request overhangs the edge and gets clipped.
+        width: content.columnWidth
+        // Generous on purpose. This panel is read in glances rather than
+        // scanned, and every section in it answers a different question, so
+        // they want visible daylight between them rather than a tidy list.
+        spacing: Style.space(12)
 
-        // The plugin is called Tesla everywhere it is listed, because that is
-        // what you look for when you go hunting for it. The joke is here, at
-        // the top of the panel, where it is the actual question being asked.
-        // Which car it is about is the selector's job, and the selector is
-        // only there when the answer is not obvious.
-        PanelSectionHeader {
-          id: title
-          anchors.left: parent.left
-          anchors.verticalCenter: parent.verticalCenter
-          text: "DUDE, WHERE'S MY CAR?"
-          foreground: root.foreground
-          fontFamily: root.fontFamily
+        // ------------------------------------------------------------- header
+
+        Item {
+          width: parent.width
+          height: Math.max(title.implicitHeight, badge.height)
+
+          // The plugin is called Tesla everywhere it is listed, because that is
+          // what you look for when you go hunting for it. The joke is here, at
+          // the top of the panel, where it is the actual question being asked.
+          // Which car it is about is the selector's job, and the selector is
+          // only there when the answer is not obvious.
+          PanelSectionHeader {
+            id: title
+            anchors.left: parent.left
+            anchors.verticalCenter: parent.verticalCenter
+            text: "DUDE, WHERE'S MY CAR?"
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+          }
+
+          Row {
+            id: badge
+            anchors.right: parent.right
+            anchors.verticalCenter: parent.verticalCenter
+            spacing: Style.space(4)
+
+            // No model name here. The panel is about one specific car and
+            // naming it on every glance is noise; the bar's tooltip says which
+            // one on the rare occasion that is the question.
+            Rectangle {
+              anchors.verticalCenter: parent.verticalCenter
+              width: Style.space(6)
+              height: width
+              radius: width / 2
+              // Green for reachable, whatever it is doing: driving and
+              // charging are both online, and the word beside the dot already
+              // says which. The dot answers one question only: is the car
+              // there to be asked.
+              color: root.errorText !== "" ? Color.urgent
+                   : root.asleep ? Color.muted
+                   : root.carState === "" ? root.foreground
+                   : root.charging ? root.chargeRed
+                   : root.liveGreen
+              opacity: root.asleep ? 0.7 : 1
+            }
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.verticalCenter: parent.verticalCenter
+              text: root.stateWord
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              color: root.foreground
+              opacity: 0.7
+            }
+          }
         }
 
         Row {
-          id: badge
-          anchors.right: parent.right
-          anchors.verticalCenter: parent.verticalCenter
-          spacing: Style.space(4)
+          id: carSelector
+          visible: root.availableCars.length > 1
+          width: parent.width
+          spacing: Style.space(6)
 
-          // No model name here. The panel is about one specific car and
-          // naming it on every glance is noise; the bar's tooltip says which
-          // one on the rare occasion that is the question.
-          Rectangle {
-            anchors.verticalCenter: parent.verticalCenter
-            width: Style.space(6)
-            height: width
-            radius: width / 2
-            // Green for reachable, whatever it is doing: driving and
-            // charging are both online, and the word beside the dot already
-            // says which. The dot answers one question only: is the car
-            // there to be asked.
-            color: root.errorText !== "" ? Color.urgent
-                 : root.asleep ? Color.muted
-                 : root.carState === "" ? root.foreground
-                 : root.charging ? root.chargeRed
-                 : root.liveGreen
-            opacity: root.asleep ? 0.7 : 1
+          readonly property real buttonWidth: root.availableCars.length > 0
+            ? (width - spacing * (root.availableCars.length - 1)) / root.availableCars.length
+            : 0
+
+          Repeater {
+            model: root.availableCars
+
+            Button {
+              required property var modelData
+
+              width: carSelector.buttonWidth
+              text: modelData.name || "Tesla"
+              tooltipText: "VIN " + modelData.vin
+              selected: String(modelData.vin) === root.selectedVin
+              enabled: !root.switchBusy
+              bordered: true
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: root.selectCar(modelData.vin, modelData.name)
+            }
+          }
+        }
+
+        // ---------------------------------------------------------------- map
+
+        Rectangle {
+          id: mapArea
+          width: parent.width
+          // Three to two rather than sixteen to nine. A map is read outwards
+          // from the middle, so at a narrow width the wide aspect spends the
+          // panel on horizon and leaves you two streets of context; the squarer
+          // one shows the block the car is parked on.
+          height: Math.round(width * 2 / 3)
+          radius: Style.space(6)
+          color: Qt.rgba(0, 0, 0, 0.35)
+          clip: true
+
+          MapView {
+            anchors.fill: parent
+            plan: root.mapPlan
+            lightMap: root.lightMap
+            heading: root.hasReading && root.reading.heading !== null ? root.reading.heading : 0
+            driving: root.driving
+            stale: root.stale
+            foreground: root.foreground
+            accent: root.liveAccent
+            fontFamily: root.fontFamily
           }
 
           Text {
             textFormat: Text.PlainText
-            anchors.verticalCenter: parent.verticalCenter
-            text: root.stateWord
+            anchors.centerIn: parent
+            visible: !root.hasPosition
+            text: root.errorText !== "" ? root.errorText
+                : root.hasReading ? "The car is not sharing its location"
+                : "Waiting for the car"
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption
             color: root.foreground
-            opacity: 0.7
+            opacity: 0.6
+          }
+
+          // The map is the link. Where the car is and wanting to go there are
+          // the same thought, so there is nothing to aim at but what you are
+          // already looking at.
+          MouseArea {
+            anchors.fill: parent
+            enabled: root.hasPosition
+            cursorShape: Qt.PointingHandCursor
+            onClicked: root.openInMaps()
+          }
+
+          // No speed badge here any more. It said what the line under the map
+          // already says and what the status word above it already implies, and
+          // it did so on top of the one thing in the panel worth looking at.
+        }
+
+        // -------------------------------------------------------------- where
+
+        Column {
+          width: parent.width
+          spacing: Style.space(2)
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            visible: root.place !== ""
+            text: root.place
+            elide: Text.ElideRight
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.body
+            color: root.foreground
+          }
+
+          // Above the summary rather than below it: the summary ends in how old
+          // the reading is, which is the last thing on the panel worth reading
+          // and so belongs last.
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            visible: root.etaText !== ""
+            text: root.etaText
+            elide: Text.ElideRight
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            color: root.liveAccent
+          }
+
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            text: root.summary
+            elide: Text.ElideRight
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            color: root.foreground
+            opacity: 0.65
           }
         }
-      }
 
-      Row {
-        id: carSelector
-        visible: root.availableCars.length > 1
-        width: parent.width
-        spacing: Style.space(6)
+        PanelSeparator { width: parent.width }
 
-        readonly property real buttonWidth: root.availableCars.length > 0
-          ? (width - spacing * (root.availableCars.length - 1)) / root.availableCars.length
-          : 0
+        // -------------------------------------------------------------- stats
 
-        Repeater {
-          model: root.availableCars
+        // Battery and range at the two ends of one line, with the bar spanning
+        // both underneath. Three columns of figures was the first arrangement
+        // and it only worked while the panel was wide: narrow it and each column
+        // is too tight to hold a big number and its unit without them colliding.
+        // Two figures and a full-width bar survives being made small, and reads
+        // better wide as well.
+        // The three read as one thing, so they are spaced as one thing. Left to
+        // the panel's own rhythm the figures floated a long way above their own
+        // bar and the block came apart.
+        Column {
+          width: parent.width
+          spacing: Style.space(4)
 
-          Button {
-            required property var modelData
+          // The bar first and the numbers under it. They used to sit above at
+          // display size, which made the battery the loudest thing on a panel
+          // whose subject is where the car is. The bar already carries the
+          // reading at a glance; the figures are there to be precise, not to
+          // shout.
+          Rectangle {
+            width: parent.width
+            height: Style.space(6)
+            radius: height / 2
+            color: Qt.rgba(1, 1, 1, 0.12)
 
-            width: carSelector.buttonWidth
-            text: modelData.name || "Tesla"
-            tooltipText: "VIN " + modelData.vin
-            selected: String(modelData.vin) === root.selectedVin
-            enabled: !root.switchBusy
-            bordered: true
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            fontSize: Style.font.bodySmall
-            onClicked: root.selectCar(modelData.vin, modelData.name)
+            Rectangle {
+              width: parent.width * Math.max(0, Math.min(1,
+                (root.hasReading && root.reading.battery !== null ? root.reading.battery : 0) / 100))
+              height: parent.height
+              radius: parent.radius
+              color: root.charging ? root.chargeRed : root.foreground
+              opacity: root.charging ? 1 : 0.8
+
+              Behavior on width {
+                NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
+              }
+            }
+
+            // The charge limit is a notch rather than a third number on the
+            // line below: what you read off a bar is how far the fill is from
+            // the line, and the line only needs naming once.
+            Rectangle {
+              visible: root.hasReading && root.reading.charge_limit !== null
+              x: parent.width * Math.max(0, Math.min(1,
+                (root.hasReading && root.reading.charge_limit !== null ? root.reading.charge_limit : 100) / 100))
+                - width / 2
+              width: Math.max(1, Style.space(2))
+              height: parent.height
+              color: root.foreground
+              opacity: 0.5
+            }
+          }
+
+          // Charge on the left, what it is heading for in the middle, range on
+          // the right. The three ends of the same sentence, under the bar that
+          // draws it.
+          Item {
+            width: parent.width
+            height: batteryLabel.implicitHeight
+
+            Text {
+              textFormat: Text.PlainText
+              id: batteryLabel
+              anchors.left: parent.left
+              text: root.hasReading && root.reading.battery !== null
+                ? root.reading.battery + "%" : "\u2014"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              color: root.foreground
+            }
+
+            // Nothing in the middle. The charge limit lived here, centred
+            // between two aligned figures, which made it read as a third
+            // unrelated item and shifted about as the numbers changed width.
+            // The notch on the bar shows it, and the details grid names it.
+
+            Text {
+              textFormat: Text.PlainText
+              anchors.right: parent.right
+              text: root.hasReading && root.reading.range !== null
+                ? Math.round(root.reading.range) + " " + root.reading.range_unit : "\u2014"
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.body
+              color: root.foreground
+            }
           }
         }
+
       }
 
-      // ---------------------------------------------------------------- map
+      Column {
+        id: contentRight
+        width: content.columnWidth
+        spacing: Style.space(12)
 
-      Rectangle {
-        id: mapArea
-        width: parent.width
-        // Three to two rather than sixteen to nine. A map is read outwards
-        // from the middle, so at a narrow width the wide aspect spends the
-        // panel on horizon and leaves you two streets of context; the squarer
-        // one shows the block the car is parked on.
-        height: Math.round(width * 2 / 3)
-        radius: Style.space(6)
-        color: Qt.rgba(0, 0, 0, 0.35)
-        clip: true
+        PanelSeparator {
+          width: parent.width
+          // Stacked, this rule divides the readings above from the details
+          // below. Side by side there is nothing above it to divide.
+          visible: root.panelColumns === 1
+        }
 
-        MapView {
-          anchors.fill: parent
-          plan: root.mapPlan
-          lightMap: root.lightMap
-          heading: root.hasReading && root.reading.heading !== null ? root.reading.heading : 0
-          driving: root.driving
-          stale: root.stale
-          foreground: root.foreground
-          accent: root.liveAccent
-          fontFamily: root.fontFamily
+        // ------------------------------------------------------------ details
+
+        // The things you look up rather than watch. Two columns of label-over-
+        // value, because a label beside its value needs a leader line to stay
+        // readable at this width and a label above it needs nothing at all.
+        Grid {
+          id: detailGrid
+          width: parent.width
+          columns: 2
+          columnSpacing: Style.space(8)
+          rowSpacing: Style.space(10)
+
+          // Ordered by what you came for. Locked is what you check when you
+          // cannot find the car; software is trivia. Left as eight cells of
+          // equal weight in no particular order, nothing stood out because
+          // everything looked equally worth reading. Pairs are kept together
+          // across each row so the two halves explain each other.
+          Detail {
+            label: "locked"
+            value: !root.hasReading ? "\u2014" : root.reading.locked ? "yes" : "no"
+          }
+
+          Detail {
+            label: "sentry"
+            value: !root.hasReading ? "\u2014" : root.reading.sentry ? "on" : "off"
+          }
+
+          Detail {
+            label: "odometer"
+            value: root.hasReading && root.reading.odometer !== null
+              ? Number(root.reading.odometer).toLocaleString(Qt.locale(), "f", 0)
+                + " " + root.reading.range_unit
+              : "\u2014"
+          }
+
+          Detail {
+            label: root.usEnglish ? "tires" : "tyres"
+            // A range rather than four numbers: what you act on is the lowest
+            // one, and what tells you something is wrong is the spread.
+            value: {
+              if (!root.hasReading || !root.reading.tyres) return "\u2014"
+              var t = root.reading.tyres
+              var span = t.min === t.max ? String(t.min) : t.min + "\u2013" + t.max
+              return span + " " + root.reading.tyre_unit
+            }
+          }
+
+          Detail {
+            label: "inside"
+            value: root.hasReading && root.reading.inside_temp !== null
+              ? root.reading.inside_temp + " " + root.reading.temp_unit : "\u2014"
+          }
+
+          Detail {
+            label: "outside"
+            value: root.hasReading && root.reading.outside_temp !== null
+              ? root.reading.outside_temp + " " + root.reading.temp_unit : "\u2014"
+          }
+
+          Detail {
+            label: "charge limit"
+            value: root.hasReading && root.reading.charge_limit !== null
+              ? root.reading.charge_limit + "%" : "\u2014"
+          }
+
+          Detail {
+            label: "last charge"
+            value: root.hasReading && root.reading.energy_added !== null
+              ? Math.round((root.reading.energy_added || 0) * 10) / 10 + " kWh" : "\u2014"
+          }
+
+          Detail {
+            label: "climate"
+            value: !root.hasReading ? "\u2014" : root.reading.climate_on ? "on" : "off"
+          }
+
+          Detail {
+            label: "software"
+            value: root.hasReading && root.reading.software ? root.reading.software : "\u2014"
+          }
         }
 
         Text {
           textFormat: Text.PlainText
-          anchors.centerIn: parent
-          visible: !root.hasPosition
-          text: root.errorText !== "" ? root.errorText
-              : root.hasReading ? "The car is not sharing its location"
-              : "Waiting for the car"
+          width: parent.width
+          visible: root.openText !== ""
+          text: root.openText
+          wrapMode: Text.WordWrap
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          color: root.openIsLive ? Color.urgent : Qt.darker(root.foreground, 1.5)
+        }
+
+        // ----------------------------------------------------------- controls
+
+        // Every control here is a verb. The button says what pressing it will
+        // do, not what the car is currently doing — the grid above already says
+        // that, and a row of switches that duplicate it is a row of switches you
+        // have to read twice to work out which way round they are. "Unlock"
+        // means the car is locked; the word for the state is four lines up.
+        //
+        // Nothing in this section runs on a timer, and nothing here happens
+        // because the panel opened. Every call underneath wakes the car, which
+        // is the right trade for a button somebody pressed and the wrong one for
+        // anything else.
+
+        PanelSeparator {
+          width: parent.width
+          visible: controls.visible
+        }
+
+        Column {
+          id: controls
+          width: parent.width
+          spacing: Style.space(8)
+          visible: root.controlsMode !== "Off" && root.signedIn
+
+          Grid {
+            id: controlGrid
+            width: parent.width
+            columns: 3
+            columnSpacing: Style.space(6)
+            rowSpacing: Style.space(6)
+
+            readonly property int cellWidth:
+              Math.floor((width - columnSpacing * (columns - 1)) / columns)
+
+            // The two you came for. A car you cannot find is a car you want to
+            // lock, and a car you have just parked somewhere unfamiliar is one
+            // you want watching itself.
+            Control {
+              action: root.reading && root.reading.locked === false ? "Lock" : "Unlock"
+              tooltipText: "Wakes the car"
+              onClicked: root.act(action,
+                [root.reading && root.reading.locked === false ? "lock" : "unlock"])
+            }
+
+            Control {
+              action: root.sentryOn ? "Sentry off" : "Sentry on"
+              onClicked: root.act(action, ["sentry", root.sentryOn ? "off" : "on"])
+            }
+
+            Control {
+              action: root.climateOn ? "Climate off" : "Climate on"
+              onClicked: root.act(action, ["climate", root.climateOn ? "off" : "on"])
+            }
+
+            // Vent and close are one button because the windows are one thing:
+            // they are either sealed or they are not, and whichever they are,
+            // there is only one useful thing to do about it.
+            Control {
+              action: root.windowsOpen ? "Close windows" : "Vent windows"
+              tooltipText: root.windowsOpen
+                ? "Only works within a few hundred metres of the car"
+                : "Wakes the car"
+              onClicked: root.act(action, ["windows", root.windowsOpen ? "close" : "vent"])
+            }
+
+            Control {
+              action: "Frunk"
+              onClicked: root.act(action, ["frunk"])
+            }
+
+            Control {
+              // A Model 3 lid opens and closes on the same command; on an S or
+              // an X it does too. One word covers it.
+              action: root.usEnglish ? "Trunk" : "Boot"
+              onClicked: root.act(action, ["trunk"])
+            }
+
+            // Finding the car in a car park, in the two ways a car can announce
+            // itself. Flash first: it is the one you can use at night without
+            // apologising to anybody.
+            Control {
+              action: "Flash"
+              onClicked: root.act(action, ["flash"])
+            }
+
+            Control {
+              action: "Honk"
+              onClicked: root.act(action, ["horn"])
+            }
+
+            Control {
+              visible: !root.signedProtocol
+              action: root.defrostOn ? "Defrost off" : "Defrost"
+              tooltipText: "Max defrost, front and rear"
+              onClicked: root.act(action, ["defrost", root.defrostOn ? "off" : "on"])
+            }
+          }
+
+          // -------------------------------------------------------- the cabin
+
+          // A setpoint is not a toggle, and the two do not belong in the same
+          // grid. Minus, the number, plus: the number is the control and the
+          // buttons are its ends, which is how every thermostat has worked since
+          // thermostats had buttons.
+          Stepper {
+            width: parent.width
+            label: "cabin"
+            visible: root.hasReading && root.reading.climate_setpoint !== null
+            value: root.hasReading && root.reading.climate_setpoint !== null
+              ? root.reading.climate_setpoint + " " + root.reading.temp_unit : "—"
+            // One degree on the screen, whichever screen it is. A Fahrenheit car
+            // steps a whole degree F and a Celsius one a whole degree C, because
+            // stepping half of somebody else's unit is how you end up at 21.5
+            // when you asked for 22.
+            onDown: root.setTemp(-1)
+            onUp: root.setTemp(1)
+          }
+
+          // The seat heaters that this car actually has. A Model 3 without rear
+          // heaters reports null for them and gets no buttons, rather than three
+          // that do nothing.
+          Row {
+            width: parent.width
+            spacing: Style.space(6)
+            visible: root.controlsMode === "Everything"
+              && (root.seatList.length > 0 || root.hasWheelHeater)
+
+            Text {
+              textFormat: Text.PlainText
+              text: "seats"
+              width: Style.space(46)
+              anchors.verticalCenter: parent.verticalCenter
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.caption
+              color: root.foreground
+              opacity: 0.5
+            }
+
+            Repeater {
+              model: root.seatList
+
+              // Each press is one step warmer, and 3 wraps round to off. Four
+              // levels is few enough that cycling beats a menu, and a seat
+              // heater is something you adjust by feel anyway.
+              Button {
+                required property var modelData
+                width: Style.space(52)
+                text: modelData.short + " " + modelData.level
+                tooltipText: modelData.name + ": " + modelData.level + " of 3"
+                bordered: true
+                enabled: root.controlsUsable
+                foreground: root.foreground
+                fontFamily: root.fontFamily
+                onClicked: root.act(modelData.name,
+                  ["seat", modelData.key, String((modelData.level + 1) % 4)])
+              }
+            }
+
+            Button {
+              width: Style.space(64)
+              visible: root.hasWheelHeater
+              text: root.wheelHeaterOn ? "wheel ●" : "wheel"
+              tooltipText: "Steering wheel heater"
+              bordered: true
+              enabled: root.controlsUsable
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.act("Wheel heater",
+                ["wheel", root.wheelHeaterOn ? "off" : "on"])
+            }
+          }
+
+          // ------------------------------------------------------- the charge
+
+          Stepper {
+            width: parent.width
+            label: "charge limit"
+            visible: root.hasReading && root.reading.charge_limit !== null
+            value: root.hasReading && root.reading.charge_limit !== null
+              ? root.reading.charge_limit + "%" : "—"
+            // Five at a time. Nobody has ever wanted 81%.
+            onDown: root.setLimit(-5)
+            onUp: root.setLimit(5)
+          }
+
+          Grid {
+            width: parent.width
+            columns: 3
+            columnSpacing: Style.space(6)
+            rowSpacing: Style.space(6)
+            visible: root.controlsMode === "Everything"
+
+            // Starting a charge means nothing without a cable, and Tesla says so
+            // in a word nobody would recognise. Better not to offer it.
+            Control {
+              action: root.charging ? "Stop charge" : "Start charge"
+              enabled: root.controlsUsable && root.pluggedIn
+              tooltipText: root.pluggedIn ? "" : "Nothing is plugged in"
+              onClicked: root.act(action, ["charge", root.charging ? "stop" : "start"])
+            }
+
+            Control {
+              action: root.portOpen ? "Close port" : "Open port"
+              onClicked: root.act(action, ["port", root.portOpen ? "close" : "open"])
+            }
+
+            Control {
+              visible: !root.signedProtocol
+              action: "Garage"
+              tooltipText: "HomeLink, if the car is parked by the door it is paired with"
+              onClicked: root.act(action, ["homelink"])
+            }
+
+            // The two the car will hold the cabin for while you are not in it.
+            // Both are the same switch from Tesla's side, so turning one on
+            // turns the other off, and the labels say which is running.
+            Control {
+              visible: !root.signedProtocol
+              action: root.keeper === 2 ? "Dog off" : "Dog mode"
+              onClicked: root.act(action, ["keeper", root.keeper === 2 ? "off" : "dog"])
+            }
+
+            Control {
+              visible: !root.signedProtocol
+              action: root.keeper === 3 ? "Camp off" : "Camp mode"
+              onClicked: root.act(action, ["keeper", root.keeper === 3 ? "off" : "camp"])
+            }
+
+            Control {
+              action: root.valetOn ? "Valet off" : "Valet"
+              tooltipText: "Limits speed and power, and locks the boot and the glovebox"
+              onClicked: root.act(action, ["valet", root.valetOn ? "off" : "on"])
+            }
+          }
+
+          // What just happened, or what just would not. One line, under the
+          // controls rather than over them, so the panel does not jump when it
+          // appears.
+          Text {
+            textFormat: Text.PlainText
+            width: parent.width
+            visible: text !== ""
+            text: {
+              if (commandProc.running) return root.plain(root.pendingCommand) + "…"
+              if (root.commandError !== "") return root.plain(root.commandError)
+              return ""
+            }
+            wrapMode: Text.WordWrap
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            color: root.commandError !== "" && !commandProc.running
+              ? Color.urgent : root.foreground
+            opacity: root.commandError !== "" && !commandProc.running ? 1.0 : 0.6
+          }
+        }
+
+        PanelSeparator { width: parent.width }
+
+        // ------------------------------------------------------------ actions
+
+        Row {
+          id: actions
+          width: parent.width
+          spacing: Style.space(6)
+
+          // Split evenly rather than sized to their labels: at this width three
+          // buttons hugging their text leave a ragged gap on the right, and a
+          // row of equal buttons is easier to hit besides.
+          readonly property int count: root.asleep ? 3 : 2
+          readonly property int buttonWidth:
+            Math.floor((width - Style.space(6) * (count - 1)) / count)
+
+          Button {
+            width: actions.buttonWidth
+            text: "Open in maps"
+            enabled: root.hasPosition
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.openInMaps()
+          }
+
+          Button {
+            // The cost goes in the tooltip rather than the label, and in as few
+            // words as it takes: a tooltip long enough to be a sentence is one
+            // nobody finishes. "Keeps awake" rather than "wakes" because that is
+            // what happens: the button is disabled while the car is asleep, and
+            // the call behind it could not wake one if it were not.
+            width: actions.buttonWidth
+            text: carProc.running ? "Asking\u2026" : "Refresh"
+            tooltipText: "Keeps the car awake ~15 min"
+            enabled: !carProc.running && !root.asleep
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.refresh(true)
+          }
+
+          Button {
+            // Only offered when there is something to wake, so the call that
+            // costs battery is never one click away from the call that does not.
+            visible: root.asleep
+            width: actions.buttonWidth
+            text: wakeProc.running ? "Waking\u2026" : "Wake"
+            enabled: !wakeProc.running
+            bordered: true
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.wake()
+          }
+        }
+
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          visible: root.errorText !== ""
+          text: root.errorText === "not signed in"
+            ? "Run  tesla login  once, in a terminal."
+            : root.errorHint !== "" ? root.errorHint : root.errorText
+          wrapMode: Text.WordWrap
+          horizontalAlignment: Text.AlignHCenter
           font.family: root.fontFamily
           font.pixelSize: Style.font.caption
           color: root.foreground
           opacity: 0.6
         }
-
-        // The map is the link. Where the car is and wanting to go there are
-        // the same thought, so there is nothing to aim at but what you are
-        // already looking at.
-        MouseArea {
-          anchors.fill: parent
-          enabled: root.hasPosition
-          cursorShape: Qt.PointingHandCursor
-          onClicked: root.openInMaps()
-        }
-
-        // No speed badge here any more. It said what the line under the map
-        // already says and what the status word above it already implies, and
-        // it did so on top of the one thing in the panel worth looking at.
-      }
-
-      // -------------------------------------------------------------- where
-
-      Column {
-        width: parent.width
-        spacing: Style.space(2)
-
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          visible: root.place !== ""
-          text: root.place
-          elide: Text.ElideRight
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.body
-          color: root.foreground
-        }
-
-        // Above the summary rather than below it: the summary ends in how old
-        // the reading is, which is the last thing on the panel worth reading
-        // and so belongs last.
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          visible: root.etaText !== ""
-          text: root.etaText
-          elide: Text.ElideRight
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          color: root.liveAccent
-        }
-
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          text: root.summary
-          elide: Text.ElideRight
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          color: root.foreground
-          opacity: 0.65
-        }
-      }
-
-      PanelSeparator { width: parent.width }
-
-      // -------------------------------------------------------------- stats
-
-      // Battery and range at the two ends of one line, with the bar spanning
-      // both underneath. Three columns of figures was the first arrangement
-      // and it only worked while the panel was wide: narrow it and each column
-      // is too tight to hold a big number and its unit without them colliding.
-      // Two figures and a full-width bar survives being made small, and reads
-      // better wide as well.
-      // The three read as one thing, so they are spaced as one thing. Left to
-      // the panel's own rhythm the figures floated a long way above their own
-      // bar and the block came apart.
-      Column {
-        width: parent.width
-        spacing: Style.space(4)
-
-        // The bar first and the numbers under it. They used to sit above at
-        // display size, which made the battery the loudest thing on a panel
-        // whose subject is where the car is. The bar already carries the
-        // reading at a glance; the figures are there to be precise, not to
-        // shout.
-        Rectangle {
-          width: parent.width
-          height: Style.space(6)
-          radius: height / 2
-          color: Qt.rgba(1, 1, 1, 0.12)
-
-          Rectangle {
-            width: parent.width * Math.max(0, Math.min(1,
-              (root.hasReading && root.reading.battery !== null ? root.reading.battery : 0) / 100))
-            height: parent.height
-            radius: parent.radius
-            color: root.charging ? root.chargeRed : root.foreground
-            opacity: root.charging ? 1 : 0.8
-
-            Behavior on width {
-              NumberAnimation { duration: 400; easing.type: Easing.OutCubic }
-            }
-          }
-
-          // The charge limit is a notch rather than a third number on the
-          // line below: what you read off a bar is how far the fill is from
-          // the line, and the line only needs naming once.
-          Rectangle {
-            visible: root.hasReading && root.reading.charge_limit !== null
-            x: parent.width * Math.max(0, Math.min(1,
-              (root.hasReading && root.reading.charge_limit !== null ? root.reading.charge_limit : 100) / 100))
-              - width / 2
-            width: Math.max(1, Style.space(2))
-            height: parent.height
-            color: root.foreground
-            opacity: 0.5
-          }
-        }
-
-        // Charge on the left, what it is heading for in the middle, range on
-        // the right. The three ends of the same sentence, under the bar that
-        // draws it.
-        Item {
-          width: parent.width
-          height: batteryLabel.implicitHeight
-
-          Text {
-            textFormat: Text.PlainText
-            id: batteryLabel
-            anchors.left: parent.left
-            text: root.hasReading && root.reading.battery !== null
-              ? root.reading.battery + "%" : "\u2014"
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            color: root.foreground
-          }
-
-          // Nothing in the middle. The charge limit lived here, centred
-          // between two aligned figures, which made it read as a third
-          // unrelated item and shifted about as the numbers changed width.
-          // The notch on the bar shows it, and the details grid names it.
-
-          Text {
-            textFormat: Text.PlainText
-            anchors.right: parent.right
-            text: root.hasReading && root.reading.range !== null
-              ? Math.round(root.reading.range) + " " + root.reading.range_unit : "\u2014"
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.body
-            color: root.foreground
-          }
-        }
-      }
-
-      PanelSeparator { width: parent.width }
-
-      // ------------------------------------------------------------ details
-
-      // The things you look up rather than watch. Two columns of label-over-
-      // value, because a label beside its value needs a leader line to stay
-      // readable at this width and a label above it needs nothing at all.
-      Grid {
-        id: detailGrid
-        width: parent.width
-        columns: 2
-        columnSpacing: Style.space(8)
-        rowSpacing: Style.space(10)
-
-        // Ordered by what you came for. Locked is what you check when you
-        // cannot find the car; software is trivia. Left as eight cells of
-        // equal weight in no particular order, nothing stood out because
-        // everything looked equally worth reading. Pairs are kept together
-        // across each row so the two halves explain each other.
-        Detail {
-          label: "locked"
-          value: !root.hasReading ? "\u2014" : root.reading.locked ? "yes" : "no"
-        }
-
-        Detail {
-          label: "sentry"
-          value: !root.hasReading ? "\u2014" : root.reading.sentry ? "on" : "off"
-        }
-
-        Detail {
-          label: "odometer"
-          value: root.hasReading && root.reading.odometer !== null
-            ? Number(root.reading.odometer).toLocaleString(Qt.locale(), "f", 0)
-              + " " + root.reading.range_unit
-            : "\u2014"
-        }
-
-        Detail {
-          label: root.usEnglish ? "tires" : "tyres"
-          // A range rather than four numbers: what you act on is the lowest
-          // one, and what tells you something is wrong is the spread.
-          value: {
-            if (!root.hasReading || !root.reading.tyres) return "\u2014"
-            var t = root.reading.tyres
-            var span = t.min === t.max ? String(t.min) : t.min + "\u2013" + t.max
-            return span + " " + root.reading.tyre_unit
-          }
-        }
-
-        Detail {
-          label: "inside"
-          value: root.hasReading && root.reading.inside_temp !== null
-            ? root.reading.inside_temp + " " + root.reading.temp_unit : "\u2014"
-        }
-
-        Detail {
-          label: "outside"
-          value: root.hasReading && root.reading.outside_temp !== null
-            ? root.reading.outside_temp + " " + root.reading.temp_unit : "\u2014"
-        }
-
-        Detail {
-          label: "charge limit"
-          value: root.hasReading && root.reading.charge_limit !== null
-            ? root.reading.charge_limit + "%" : "\u2014"
-        }
-
-        Detail {
-          label: "last charge"
-          value: root.hasReading && root.reading.energy_added !== null
-            ? Math.round((root.reading.energy_added || 0) * 10) / 10 + " kWh" : "\u2014"
-        }
-
-        Detail {
-          label: "climate"
-          value: !root.hasReading ? "\u2014" : root.reading.climate_on ? "on" : "off"
-        }
-
-        Detail {
-          label: "software"
-          value: root.hasReading && root.reading.software ? root.reading.software : "\u2014"
-        }
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        visible: root.openText !== ""
-        text: root.openText
-        wrapMode: Text.WordWrap
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.bodySmall
-        color: root.openIsLive ? Color.urgent : Qt.darker(root.foreground, 1.5)
-      }
-
-      // ----------------------------------------------------------- controls
-
-      // Every control here is a verb. The button says what pressing it will
-      // do, not what the car is currently doing — the grid above already says
-      // that, and a row of switches that duplicate it is a row of switches you
-      // have to read twice to work out which way round they are. "Unlock"
-      // means the car is locked; the word for the state is four lines up.
-      //
-      // Nothing in this section runs on a timer, and nothing here happens
-      // because the panel opened. Every call underneath wakes the car, which
-      // is the right trade for a button somebody pressed and the wrong one for
-      // anything else.
-
-      PanelSeparator {
-        width: parent.width
-        visible: controls.visible
-      }
-
-      Column {
-        id: controls
-        width: parent.width
-        spacing: Style.space(8)
-        visible: root.controlsMode !== "Off" && root.signedIn
-
-        Grid {
-          id: controlGrid
-          width: parent.width
-          columns: 3
-          columnSpacing: Style.space(6)
-          rowSpacing: Style.space(6)
-
-          readonly property int cellWidth:
-            Math.floor((width - columnSpacing * (columns - 1)) / columns)
-
-          // The two you came for. A car you cannot find is a car you want to
-          // lock, and a car you have just parked somewhere unfamiliar is one
-          // you want watching itself.
-          Control {
-            action: root.reading && root.reading.locked === false ? "Lock" : "Unlock"
-            tooltipText: "Wakes the car"
-            onClicked: root.act(action,
-              [root.reading && root.reading.locked === false ? "lock" : "unlock"])
-          }
-
-          Control {
-            action: root.sentryOn ? "Sentry off" : "Sentry on"
-            onClicked: root.act(action, ["sentry", root.sentryOn ? "off" : "on"])
-          }
-
-          Control {
-            action: root.climateOn ? "Climate off" : "Climate on"
-            onClicked: root.act(action, ["climate", root.climateOn ? "off" : "on"])
-          }
-
-          // Vent and close are one button because the windows are one thing:
-          // they are either sealed or they are not, and whichever they are,
-          // there is only one useful thing to do about it.
-          Control {
-            action: root.windowsOpen ? "Close windows" : "Vent windows"
-            tooltipText: root.windowsOpen
-              ? "Only works within a few hundred metres of the car"
-              : "Wakes the car"
-            onClicked: root.act(action, ["windows", root.windowsOpen ? "close" : "vent"])
-          }
-
-          Control {
-            action: "Frunk"
-            onClicked: root.act(action, ["frunk"])
-          }
-
-          Control {
-            // A Model 3 lid opens and closes on the same command; on an S or
-            // an X it does too. One word covers it.
-            action: root.usEnglish ? "Trunk" : "Boot"
-            onClicked: root.act(action, ["trunk"])
-          }
-
-          // Finding the car in a car park, in the two ways a car can announce
-          // itself. Flash first: it is the one you can use at night without
-          // apologising to anybody.
-          Control {
-            action: "Flash"
-            onClicked: root.act(action, ["flash"])
-          }
-
-          Control {
-            action: "Honk"
-            onClicked: root.act(action, ["horn"])
-          }
-
-          Control {
-            visible: !root.signedProtocol
-            action: root.defrostOn ? "Defrost off" : "Defrost"
-            tooltipText: "Max defrost, front and rear"
-            onClicked: root.act(action, ["defrost", root.defrostOn ? "off" : "on"])
-          }
-        }
-
-        // -------------------------------------------------------- the cabin
-
-        // A setpoint is not a toggle, and the two do not belong in the same
-        // grid. Minus, the number, plus: the number is the control and the
-        // buttons are its ends, which is how every thermostat has worked since
-        // thermostats had buttons.
-        Stepper {
-          width: parent.width
-          label: "cabin"
-          visible: root.hasReading && root.reading.climate_setpoint !== null
-          value: root.hasReading && root.reading.climate_setpoint !== null
-            ? root.reading.climate_setpoint + " " + root.reading.temp_unit : "—"
-          // One degree on the screen, whichever screen it is. A Fahrenheit car
-          // steps a whole degree F and a Celsius one a whole degree C, because
-          // stepping half of somebody else's unit is how you end up at 21.5
-          // when you asked for 22.
-          onDown: root.setTemp(-1)
-          onUp: root.setTemp(1)
-        }
-
-        // The seat heaters that this car actually has. A Model 3 without rear
-        // heaters reports null for them and gets no buttons, rather than three
-        // that do nothing.
-        Row {
-          width: parent.width
-          spacing: Style.space(6)
-          visible: root.controlsMode === "Everything"
-            && (root.seatList.length > 0 || root.hasWheelHeater)
-
-          Text {
-            textFormat: Text.PlainText
-            text: "seats"
-            width: Style.space(46)
-            anchors.verticalCenter: parent.verticalCenter
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.caption
-            color: root.foreground
-            opacity: 0.5
-          }
-
-          Repeater {
-            model: root.seatList
-
-            // Each press is one step warmer, and 3 wraps round to off. Four
-            // levels is few enough that cycling beats a menu, and a seat
-            // heater is something you adjust by feel anyway.
-            Button {
-              required property var modelData
-              width: Style.space(52)
-              text: modelData.short + " " + modelData.level
-              tooltipText: modelData.name + ": " + modelData.level + " of 3"
-              bordered: true
-              enabled: root.controlsUsable
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.act(modelData.name,
-                ["seat", modelData.key, String((modelData.level + 1) % 4)])
-            }
-          }
-
-          Button {
-            width: Style.space(64)
-            visible: root.hasWheelHeater
-            text: root.wheelHeaterOn ? "wheel ●" : "wheel"
-            tooltipText: "Steering wheel heater"
-            bordered: true
-            enabled: root.controlsUsable
-            foreground: root.foreground
-            fontFamily: root.fontFamily
-            onClicked: root.act("Wheel heater",
-              ["wheel", root.wheelHeaterOn ? "off" : "on"])
-          }
-        }
-
-        // ------------------------------------------------------- the charge
-
-        Stepper {
-          width: parent.width
-          label: "charge limit"
-          visible: root.hasReading && root.reading.charge_limit !== null
-          value: root.hasReading && root.reading.charge_limit !== null
-            ? root.reading.charge_limit + "%" : "—"
-          // Five at a time. Nobody has ever wanted 81%.
-          onDown: root.setLimit(-5)
-          onUp: root.setLimit(5)
-        }
-
-        Grid {
-          width: parent.width
-          columns: 3
-          columnSpacing: Style.space(6)
-          rowSpacing: Style.space(6)
-          visible: root.controlsMode === "Everything"
-
-          // Starting a charge means nothing without a cable, and Tesla says so
-          // in a word nobody would recognise. Better not to offer it.
-          Control {
-            action: root.charging ? "Stop charge" : "Start charge"
-            enabled: root.controlsUsable && root.pluggedIn
-            tooltipText: root.pluggedIn ? "" : "Nothing is plugged in"
-            onClicked: root.act(action, ["charge", root.charging ? "stop" : "start"])
-          }
-
-          Control {
-            action: root.portOpen ? "Close port" : "Open port"
-            onClicked: root.act(action, ["port", root.portOpen ? "close" : "open"])
-          }
-
-          Control {
-            visible: !root.signedProtocol
-            action: "Garage"
-            tooltipText: "HomeLink, if the car is parked by the door it is paired with"
-            onClicked: root.act(action, ["homelink"])
-          }
-
-          // The two the car will hold the cabin for while you are not in it.
-          // Both are the same switch from Tesla's side, so turning one on
-          // turns the other off, and the labels say which is running.
-          Control {
-            visible: !root.signedProtocol
-            action: root.keeper === 2 ? "Dog off" : "Dog mode"
-            onClicked: root.act(action, ["keeper", root.keeper === 2 ? "off" : "dog"])
-          }
-
-          Control {
-            visible: !root.signedProtocol
-            action: root.keeper === 3 ? "Camp off" : "Camp mode"
-            onClicked: root.act(action, ["keeper", root.keeper === 3 ? "off" : "camp"])
-          }
-
-          Control {
-            action: root.valetOn ? "Valet off" : "Valet"
-            tooltipText: "Limits speed and power, and locks the boot and the glovebox"
-            onClicked: root.act(action, ["valet", root.valetOn ? "off" : "on"])
-          }
-        }
-
-        // What just happened, or what just would not. One line, under the
-        // controls rather than over them, so the panel does not jump when it
-        // appears.
-        Text {
-          textFormat: Text.PlainText
-          width: parent.width
-          visible: text !== ""
-          text: {
-            if (commandProc.running) return root.plain(root.pendingCommand) + "…"
-            if (root.commandError !== "") return root.plain(root.commandError)
-            return ""
-          }
-          wrapMode: Text.WordWrap
-          font.family: root.fontFamily
-          font.pixelSize: Style.font.caption
-          color: root.commandError !== "" && !commandProc.running
-            ? Color.urgent : root.foreground
-          opacity: root.commandError !== "" && !commandProc.running ? 1.0 : 0.6
-        }
-      }
-
-      PanelSeparator { width: parent.width }
-
-      // ------------------------------------------------------------ actions
-
-      Row {
-        id: actions
-        width: parent.width
-        spacing: Style.space(6)
-
-        // Split evenly rather than sized to their labels: at this width three
-        // buttons hugging their text leave a ragged gap on the right, and a
-        // row of equal buttons is easier to hit besides.
-        readonly property int count: root.asleep ? 3 : 2
-        readonly property int buttonWidth:
-          Math.floor((width - Style.space(6) * (count - 1)) / count)
-
-        Button {
-          width: actions.buttonWidth
-          text: "Open in maps"
-          enabled: root.hasPosition
-          bordered: true
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          onClicked: root.openInMaps()
-        }
-
-        Button {
-          // The cost goes in the tooltip rather than the label, and in as few
-          // words as it takes: a tooltip long enough to be a sentence is one
-          // nobody finishes. "Keeps awake" rather than "wakes" because that is
-          // what happens: the button is disabled while the car is asleep, and
-          // the call behind it could not wake one if it were not.
-          width: actions.buttonWidth
-          text: carProc.running ? "Asking\u2026" : "Refresh"
-          tooltipText: "Keeps the car awake ~15 min"
-          enabled: !carProc.running && !root.asleep
-          bordered: true
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          onClicked: root.refresh(true)
-        }
-
-        Button {
-          // Only offered when there is something to wake, so the call that
-          // costs battery is never one click away from the call that does not.
-          visible: root.asleep
-          width: actions.buttonWidth
-          text: wakeProc.running ? "Waking\u2026" : "Wake"
-          enabled: !wakeProc.running
-          bordered: true
-          foreground: root.foreground
-          fontFamily: root.fontFamily
-          onClicked: root.wake()
-        }
-      }
-
-      Text {
-        textFormat: Text.PlainText
-        width: parent.width
-        visible: root.errorText !== ""
-        text: root.errorText === "not signed in"
-          ? "Run  tesla login  once, in a terminal."
-          : root.errorHint !== "" ? root.errorHint : root.errorText
-        wrapMode: Text.WordWrap
-        horizontalAlignment: Text.AlignHCenter
-        font.family: root.fontFamily
-        font.pixelSize: Style.font.caption
-        color: root.foreground
-        opacity: 0.6
       }
     }
   }
