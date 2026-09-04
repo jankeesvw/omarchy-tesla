@@ -84,27 +84,30 @@ Panel {
     return (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) > 0.5
   }
 
-  // CARTO's two basemaps are quiet enough to read a marker off and come in a
-  // matched pair, which is the whole reason they are the default over OSM's
-  // own: a dark map dropped into a light theme is a hole in the panel, and a
-  // light one in a dark theme is a torch in the face. Auto follows the theme
-  // so neither happens; the explicit choices are for anyone who wants the map
-  // to disagree on purpose.
+  // OpenStreetMap's own tiles, because they are the ones that stay free
+  // without an account. CARTO's matched light and dark pair used to be the
+  // default and read better behind a marker, but CARTO now enforces an API
+  // key on its basemaps and a keyless request comes back stamped "API KEY
+  // NEEDED" across the map. A default that needs a signup is not a default.
+  //
+  // OSM ships one style and it is a pale one, so a dark theme gets it inverted
+  // rather than swapped: a light map in a dark panel is a torch in the face.
+  // Auto follows the theme; the explicit choices are for anyone who wants the
+  // map to disagree on purpose.
   readonly property string effectiveMapStyle:
     mapStyle === "Auto" ? (lightTheme ? "Light" : "Dark") : mapStyle
 
-  readonly property string tileUrl: {
-    if (effectiveMapStyle === "Light") return "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-    if (effectiveMapStyle === "OpenStreetMap") return "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    return "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-  }
+  readonly property string tileUrl: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+  readonly property bool darkMap: effectiveMapStyle === "Dark"
 
   // Whether what is about to be drawn is a pale map. Anything painted on top
   // of it, the attribution and the ring around the marker, has to contrast with
   // the tiles rather than with the panel, and those two can disagree: a dark
   // theme with the map forced to Light is exactly where white-on-white went
-  // missing. OpenStreetMap's standard style counts as light too.
+  // missing.
   readonly property bool lightMap: effectiveMapStyle !== "Dark"
+
 
   // Qt decides for itself whether a string is markup, and a Text or tooltip in
   // that mode fetches `<img src="http://...">` for real, from inside the shell
@@ -709,6 +712,7 @@ Panel {
           anchors.fill: parent
           plan: root.mapPlan
           lightMap: root.lightMap
+          darkMap: root.darkMap
           heading: root.hasReading && root.reading.heading !== null ? root.reading.heading : 0
           driving: root.driving
           stale: root.stale

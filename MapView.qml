@@ -1,5 +1,7 @@
 import QtQuick
+import QtQuick.Effects
 import QtQuick.Shapes
+import Qt5Compat.GraphicalEffects
 import qs.Commons
 
 // The map: tiles laid out under a marker that points the way the car is
@@ -21,6 +23,18 @@ Item {
   // coloured off this rather than off the theme, because the map can be light
   // inside a dark panel and white-on-white reads as nothing at all.
   property bool lightMap: false
+  // Whether the tiles are turned into a dark map. OpenStreetMap ships one
+  // style and it is a pale one, and the dark basemap that used to stand in for
+  // it needs an API key now, so a dark theme darkens the pale one instead of
+  // swapping to something else.
+  //
+  // Black laid over the top was the obvious way and it looks it: white goes to
+  // grey while the yellows and greens stay just as loud underneath. What works
+  // is what OpenStreetMap's own site does for its dark mode: invert the tiles,
+  // then turn the hue a half circle so the colours that survived the inversion
+  // land back where they started. Water stays blue, parks stay green, and the
+  // paper the map is printed on goes black.
+  property bool darkMap: false
   // Dimmed when the reading it came from is old, so a stale map looks stale.
   property bool stale: false
   property color foreground: Color.foreground
@@ -31,6 +45,7 @@ Item {
 
   clip: true
 
+
   // What shows through before the tiles land. Tinted the way the tiles will
   // be, so the panel does not flash the wrong colour on every open.
   Rectangle {
@@ -38,29 +53,84 @@ Item {
     color: root.lightMap ? Qt.rgba(1, 1, 1, 0.12) : Qt.rgba(0, 0, 0, 0.35)
   }
 
-  Repeater {
-    model: root.ready ? root.plan.tiles : []
+  // The tiles live in their own layer so the darkening can be applied to the
+  // map and nothing else: the marker and the attribution sit above it and are
+  // meant to stay the colour they were picked to be.
+  Item {
+    id: tiles
+    anchors.fill: parent
 
-    Image {
-      required property var modelData
+    // Kept as a hidden layer while the map is being darkened, so the effect
+    // below can sample it as a texture. Drawn directly when it is not, because
+    // an untouched map has no reason to go through a render target.
+    visible: !root.darkMap
+    layer.enabled: root.darkMap
 
-      x: modelData.x
-      y: modelData.y
-      width: root.ready ? root.plan.tileSize : 256
-      height: width
-      source: "file://" + modelData.path
-      // Tiles are served at exactly the size they are drawn at, so there is
-      // nothing to resample and asynchronous decoding keeps the panel from
-      // stuttering as eight of them land at once.
-      asynchronous: true
-      cache: true
-      smooth: false
-      opacity: root.stale ? 0.55 : 1
+    Repeater {
+      model: root.ready ? root.plan.tiles : []
 
-      Behavior on opacity {
-        NumberAnimation { duration: 200 }
+      Image {
+        required property var modelData
+
+        x: modelData.x
+        y: modelData.y
+        width: root.ready ? root.plan.tileSize : 256
+        height: width
+        source: "file://" + modelData.path
+        // Tiles are served at exactly the size they are drawn at, so there is
+        // nothing to resample and asynchronous decoding keeps the panel from
+        // stuttering as eight of them land at once.
+        asynchronous: true
+        cache: true
+        smooth: false
+        opacity: root.stale ? 0.55 : 1
+
+        Behavior on opacity {
+          NumberAnimation { duration: 200 }
+        }
       }
     }
+  }
+
+  // The inversion needs something to be different from, and difference with
+  // white is what inverting is. Never drawn itself.
+  Rectangle {
+    id: white
+    anchors.fill: tiles
+    color: "white"
+    visible: false
+    layer.enabled: root.darkMap
+  }
+
+  Blend {
+    id: inverted
+    anchors.fill: tiles
+    source: tiles
+    foregroundSource: white
+    mode: "difference"
+    visible: false
+    layer.enabled: root.darkMap
+  }
+
+  // Half a turn of the colour wheel, which is what puts the blues and greens
+  // back after the inversion sent them to orange and magenta.
+  HueSaturation {
+    id: rotated
+    anchors.fill: tiles
+    source: inverted
+    hue: 0.5
+    visible: false
+    layer.enabled: root.darkMap
+  }
+
+  // Taking the last of the glare off, the same couple of points the OSM site
+  // takes off its own dark tiles.
+  MultiEffect {
+    anchors.fill: tiles
+    source: rotated
+    visible: root.darkMap
+    brightness: -0.05
+    contrast: -0.1
   }
 
   Text {
@@ -166,8 +236,9 @@ Item {
 
   // ------------------------------------------------------------- attribution
 
-  // Both tile services ask for this, and both deserve it: the map is free
-  // because somebody else is paying for it.
+  // OpenStreetMap asks for this, and deserves it: the map is free because
+  // somebody else is paying for it. The text comes from `tesla map`, so a
+  // basemap of your own can name whoever it needs to name.
   Text {
     textFormat: Text.PlainText
     anchors.right: parent.right
