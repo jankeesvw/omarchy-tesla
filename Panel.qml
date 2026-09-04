@@ -675,15 +675,37 @@ Panel {
   // beside it while the car was moving, which made the bar shuffle every time
   // a car pulled away. A lot of movement in the corner of your eye to say
   // something the panel says better. The colour carries it instead.
-  implicitWidth: button.implicitWidth
+  // vic: the remaining range is the bar item, as "183" (the unit is in the
+  // tooltip and the panel; the bar is for the number you glance at), in the same
+  // cell style the shell's battery widget uses for its percentage. It is the
+  // last reading the panel already holds, so it costs the car nothing extra;
+  // it is blank until a reading exists and ages with it. `showRange` turns it
+  // off for anyone who wants the mark alone, as upstream ships it.
+  readonly property bool showRange: setting("showRange", true)
+  readonly property string barRange:
+    showRange && hasReading && reading.range !== null && reading.range !== undefined
+      ? String(Math.round(reading.range))
+      : ""
+
+  implicitWidth: barRow.implicitWidth
   implicitHeight: button.implicitHeight
 
-  BarIconButton {
-    id: button
+  Row {
+    id: barRow
     anchors.left: parent.left
     anchors.top: parent.top
     anchors.bottom: parent.bottom
+    spacing: 0
+
+  BarIconButton {
+    id: button
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
     bar: root.bar
+    // vic: the number is the widget. The mark only stands in while there is
+    // no reading to show (first start, signed out), so there is always
+    // something in the bar to click.
+    visible: root.barRange === ""
 
     iconComponent: Component {
       TeslaMark {
@@ -720,11 +742,31 @@ Panel {
     }
   }
 
+  // The number. Same colour rules as the mark so the two read as one widget:
+  // green while driving, dimmed while asleep. Its own cell rather than text
+  // inside the icon slot because the mark is a Shape, not a glyph, and the
+  // shell's icon button only knows how to typeset one or the other.
+  WidgetButton {
+    id: rangeLabel
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    bar: root.bar
+    text: root.barRange
+    fontSize: Style.font.bodySmall
+    horizontalMargin: 6
+    active: root.driving
+    activeColor: root.liveGreen
+    dimmed: root.asleep || root.errorText !== ""
+    tooltipText: button.tooltipText
+    onPressed: function(b) { button.pressed(b) }
+  }
+  }
+
   // ------------------------------------------------------------------- panel
 
   PopupCard {
     id: popup
-    anchorItem: button
+    anchorItem: root.barRange !== "" ? rangeLabel : button
     bar: root.bar
     owner: root
     open: root.opened
