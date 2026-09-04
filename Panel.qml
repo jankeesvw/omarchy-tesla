@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -534,16 +535,75 @@ Panel {
 
   // --------------------------------------------------------------------- bar
 
-  // The bar is the mark and nothing else. An earlier version slid the speed in
-  // beside it while the car was moving, which made the bar shuffle every time
-  // a car pulled away. A lot of movement in the corner of your eye to say
-  // something the panel says better. The colour carries it instead.
-  implicitWidth: button.implicitWidth
+  // The mark, and the remaining range beside it as a bare "183", in the same
+  // cell style the shell's battery widget uses for its percentage. The unit
+  // stays in the tooltip and in the panel: the bar is for the number you
+  // glance at, and "183 mi" there is two things to read where one would do.
+  //
+  // An earlier version slid the *speed* in beside the mark while the car was
+  // moving, and that did shuffle the bar every time a car pulled away. Range
+  // is not speed: it moves a digit at a time over a drive, so it sits still
+  // in the corner of your eye in a way the speed never did.
+  //
+  // It costs the car nothing. This is the last reading the panel already
+  // holds, not another question asked of it, so the sleep policy is untouched
+  // and the number ages along with everything else on show.
+  //
+  // Right-click puts it away and brings it back, because whether you want a
+  // number in your bar is a thing you decide by looking at it rather than by
+  // reading a settings list. The choice is kept in a state file, so the widget
+  // comes back the way you left it. `showRange` in the settings is only where
+  // it starts, before you have ever right-clicked.
+  property bool showRange: setting("showRange", true)
+
+  readonly property string stateDir:
+    (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
+    + "/omarchy-tesla"
+
+  readonly property string barRange:
+    showRange && hasReading && reading.range !== null && reading.range !== undefined
+      ? String(Math.round(reading.range))
+      : ""
+
+  function toggleRange() {
+    root.showRange = !root.showRange
+    rangeState.setText(root.showRange ? "1\n" : "0\n")
+  }
+
+  // Same shape as the sweeper's state file: make the directory first, then
+  // read, because a FileView pointed at a path whose parent does not exist
+  // fails quietly and you are left wondering why nothing was remembered.
+  Process {
+    id: mkStateDir
+    command: ["mkdir", "-p", root.stateDir]
+    onExited: rangeState.reload()
+  }
+
+  FileView {
+    id: rangeState
+    path: root.stateDir + "/show-range"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      var v = text().trim()
+      if (v === "0" || v === "1") root.showRange = v === "1"
+    }
+  }
+
+  Component.onCompleted: mkStateDir.running = true
+
+  implicitWidth: barRow.implicitWidth
   implicitHeight: button.implicitHeight
+
+  Row {
+    id: barRow
+    anchors.left: parent.left
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    spacing: 0
 
   BarIconButton {
     id: button
-    anchors.left: parent.left
     anchors.top: parent.top
     anchors.bottom: parent.bottom
     bar: root.bar
@@ -579,8 +639,35 @@ Panel {
         root.openInMaps()
         return
       }
+      if (b === Qt.RightButton) {
+        root.toggleRange()
+        return
+      }
       root.toggle()
     }
+  }
+
+  // The number. Same colour rules as the mark so the two read as one widget:
+  // green while driving, dimmed while asleep. Its own cell rather than text
+  // inside the icon slot because the mark is a Shape, not a glyph, and the
+  // shell's icon button only knows how to typeset one or the other. The cell
+  // is padded tight on the left so the two sit together as one thing rather
+  // than as the Tesla widget and some number that happens to follow it.
+  WidgetButton {
+    id: rangeLabel
+    anchors.top: parent.top
+    anchors.bottom: parent.bottom
+    visible: root.barRange !== ""
+    bar: root.bar
+    text: root.barRange
+    fontSize: Style.font.bodySmall
+    horizontalMargin: 2
+    active: root.driving
+    activeColor: root.liveGreen
+    dimmed: root.asleep || root.errorText !== ""
+    tooltipText: button.tooltipText
+    onPressed: function(b) { button.pressed(b) }
+  }
   }
 
   // ------------------------------------------------------------------- panel

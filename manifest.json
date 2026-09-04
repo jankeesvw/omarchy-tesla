@@ -21,6 +21,7 @@
     "defaultSection": "right",
     "defaults": {
       "vin": "",
+      "showRange": true,
       "panelWidth": 380,
       "mapZoom": 16,
       "mapStyle": "Auto",
@@ -36,6 +37,13 @@
         "label": "VIN",
         "defaultValue": "",
         "description": "Which car is initially selected when the account has more than one. Empty picks the first one Tesla lists. Cars can then be switched from the panel."
+      },
+      {
+        "key": "showRange",
+        "type": "boolean",
+        "label": "Show the range in the bar",
+        "defaultValue": true,
+        "description": "Puts the remaining range in the bar next to the mark, just the number in whatever unit the car's own screen uses. It is the last reading the panel already holds, so it asks the car for nothing extra. This is only where it starts: right-click the widget to put the number away or bring it back, and it stays the way you left it."
       },
       {
         "key": "mapStyle",
