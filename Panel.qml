@@ -268,6 +268,7 @@ Panel {
 
   readonly property bool switchBusy: stateProc.running || carProc.running
     || wakeProc.running || mapProc.running || placeProc.running
+    || commandProc.running
 
   function selectCar(vin, name) {
     vin = String(vin || "")
@@ -283,6 +284,9 @@ Panel {
     placeParked = ""
     errorText = ""
     errorHint = ""
+    commandError = ""
+    pendingCommand = ""
+    settle.stop()
     mapDebounce.stop()
     placeDebounce.stop()
 
@@ -420,6 +424,142 @@ Panel {
     browserProc.command = ["xdg-open", url]
     browserProc.running = true
     root.close()
+  }
+
+  // ----------------------------------------------------------- commanding
+
+  // Reading and commanding are two different relationships with the same car,
+  // and they get opposite defaults. A reading is refused to a parked car
+  // because nobody asked for it and it costs range. A command is granted and
+  // the car is woken to hear it, because somebody pressed a button and a
+  // button that silently did nothing would be worse than no button.
+  //
+  // The script enforces the same thing from its side, so a mistake in this
+  // file cannot send a command by accident any more than it can send a read.
+
+  // What is in flight, by the name on the button that started it. Empty means
+  // nothing is.
+  property string pendingCommand: ""
+  // Why the last one did not work, in words worth showing. Cleared the moment
+  // another is sent.
+  property string commandError: ""
+
+  readonly property bool sentryOn: hasReading && reading.sentry === true
+  readonly property bool climateOn: hasReading && reading.climate_on === true
+  readonly property bool defrostOn: hasReading && reading.defrost === true
+  readonly property bool windowsOpen: hasReading && reading.windows_open === true
+  readonly property bool wheelHeaterOn: hasReading && reading.wheel_heater === true
+  // A car with no wheel heater reports null rather than false, the same way it
+  // does for a seat it has not got. Offering the button anyway would be
+  // offering one that can only ever collect a refusal.
+  readonly property bool hasWheelHeater:
+    hasReading && reading.wheel_heater !== null && reading.wheel_heater !== undefined
+  readonly property bool valetOn: hasReading && reading.valet === true
+  readonly property bool pluggedIn: hasReading && reading.plugged_in === true
+  readonly property bool portOpen: hasReading && reading.charge_port_open === true
+  readonly property int keeper: hasReading && reading.climate_keeper !== undefined
+    ? Number(reading.climate_keeper) : 0
+
+  // Which controls are offered at all. Off is for anybody who wants the
+  // widget to stay a widget that only looks; Everything is the full set.
+  readonly property string controlsMode: setting("controls", "Essentials")
+
+  // A control is usable once there is a reading to base its label on. Before
+  // that the panel does not know whether the car is locked, and a button that
+  // guessed would be a button that locked a car you were trying to open.
+  readonly property bool controlsUsable:
+    signedIn && hasReading && !commandProc.running
+
+  // Only the seats this car reports. A null is a seat with no heater in it,
+  // and Tesla reports one for every position the model could have had.
+  readonly property var seatList: {
+    if (!hasReading || !reading.seats) return []
+    var names = [["front-left", "FL", "Front left"],
+                 ["front-right", "FR", "Front right"],
+                 ["rear-left", "RL", "Rear left"],
+                 ["rear-center", "RC", "Rear centre"],
+                 ["rear-right", "RR", "Rear right"]]
+    var out = []
+    for (var i = 0; i < names.length; i++) {
+      var level = reading.seats[names[i][0]]
+      if (level === null || level === undefined) continue
+      out.push({key: names[i][0], short: names[i][1], name: names[i][2],
+                level: Number(level)})
+    }
+    return out
+  }
+
+  Process {
+    id: commandProc
+    stdout: StdioCollector {
+      onStreamFinished: {
+        var data
+        try {
+          data = JSON.parse(text)
+        } catch (e) {
+          root.pendingCommand = ""
+          root.commandError = "the car did not answer"
+          return
+        }
+
+        root.pendingCommand = ""
+        // The hint is the sentence a person can act on; the error is Tesla's
+        // own word for it, which is often a snake_case token. Prefer the hint
+        // and fall back to the token, because a token is still better than a
+        // button that failed silently.
+        root.commandError = data.ok === true
+          ? "" : root.plain(data.hint || data.error || "the car refused")
+
+        // The car is awake — the command woke it — and it is no longer the car
+        // the last reading describes. This is the one place a full read is
+        // worth forcing: the throttle exists to let a parked car sleep, and
+        // this car is not going to sleep for another quarter of an hour
+        // whatever we do now.
+        if (data.ok === true) settle.restart()
+      }
+    }
+  }
+
+  // Not straight away. Tesla accepts the command before the car has finished
+  // doing it, so a reading taken immediately shows the old state and the panel
+  // spends three seconds insisting nothing happened.
+  Timer {
+    id: settle
+    interval: 4000
+    onTriggered: {
+      if (!stateProc.running) stateProc.running = true
+      root.refresh(true)
+    }
+  }
+
+  function act(label, args) {
+    if (commandProc.running) return
+    root.commandError = ""
+    root.pendingCommand = String(label || "")
+    commandProc.command = root.cmd(args)
+    commandProc.running = true
+  }
+
+  // The two steppers. Both work in the units on the screen and both clamp to
+  // what the car will accept, so holding a button at either end is a no-op
+  // rather than a queue of refusals.
+  function setTemp(delta) {
+    if (!hasReading || reading.climate_setpoint === null) return
+    var unit = String(reading.temp_unit || "").slice(-1)
+    var next = Number(reading.climate_setpoint) + delta
+    // The car's own limits, in each unit. Below the floor it does nothing and
+    // above the ceiling it does nothing, so there is no sense sending either.
+    var low = unit === "F" ? 59 : 15
+    var high = unit === "F" ? 82 : 28
+    if (next < low || next > high) return
+    root.act("Cabin " + next + "°", ["temp", String(next) + unit])
+  }
+
+  function setLimit(delta) {
+    if (!hasReading || reading.charge_limit === null) return
+    var next = Number(reading.charge_limit) + delta
+    if (next < 50 || next > 100) return
+    root.act("Charge limit " + next + "%", ["limit", String(next)])
   }
 
   // ------------------------------------------------------------------ wording
@@ -974,6 +1114,258 @@ Panel {
         color: Color.urgent
       }
 
+      // ----------------------------------------------------------- controls
+
+      // Every control here is a verb. The button says what pressing it will
+      // do, not what the car is currently doing — the grid above already says
+      // that, and a row of switches that duplicate it is a row of switches you
+      // have to read twice to work out which way round they are. "Unlock"
+      // means the car is locked; the word for the state is four lines up.
+      //
+      // Nothing in this section runs on a timer, and nothing here happens
+      // because the panel opened. Every call underneath wakes the car, which
+      // is the right trade for a button somebody pressed and the wrong one for
+      // anything else.
+
+      PanelSeparator {
+        width: parent.width
+        visible: controls.visible
+      }
+
+      Column {
+        id: controls
+        width: parent.width
+        spacing: Style.space(8)
+        visible: root.controlsMode !== "Off" && root.signedIn
+
+        Grid {
+          id: controlGrid
+          width: parent.width
+          columns: 3
+          columnSpacing: Style.space(6)
+          rowSpacing: Style.space(6)
+
+          readonly property int cellWidth:
+            Math.floor((width - columnSpacing * (columns - 1)) / columns)
+
+          // The two you came for. A car you cannot find is a car you want to
+          // lock, and a car you have just parked somewhere unfamiliar is one
+          // you want watching itself.
+          Control {
+            action: root.reading && root.reading.locked === false ? "Lock" : "Unlock"
+            tooltipText: "Wakes the car"
+            onClicked: root.act(action,
+              [root.reading && root.reading.locked === false ? "lock" : "unlock"])
+          }
+
+          Control {
+            action: root.sentryOn ? "Sentry off" : "Sentry on"
+            onClicked: root.act(action, ["sentry", root.sentryOn ? "off" : "on"])
+          }
+
+          Control {
+            action: root.climateOn ? "Climate off" : "Climate on"
+            onClicked: root.act(action, ["climate", root.climateOn ? "off" : "on"])
+          }
+
+          // Vent and close are one button because the windows are one thing:
+          // they are either sealed or they are not, and whichever they are,
+          // there is only one useful thing to do about it.
+          Control {
+            action: root.windowsOpen ? "Close windows" : "Vent windows"
+            tooltipText: root.windowsOpen
+              ? "Only works within a few hundred metres of the car"
+              : "Wakes the car"
+            onClicked: root.act(action, ["windows", root.windowsOpen ? "close" : "vent"])
+          }
+
+          Control {
+            action: "Frunk"
+            onClicked: root.act(action, ["frunk"])
+          }
+
+          Control {
+            // A Model 3 lid opens and closes on the same command; on an S or
+            // an X it does too. One word covers it.
+            action: root.usEnglish ? "Trunk" : "Boot"
+            onClicked: root.act(action, ["trunk"])
+          }
+
+          // Finding the car in a car park, in the two ways a car can announce
+          // itself. Flash first: it is the one you can use at night without
+          // apologising to anybody.
+          Control {
+            action: "Flash"
+            onClicked: root.act(action, ["flash"])
+          }
+
+          Control {
+            action: "Honk"
+            onClicked: root.act(action, ["horn"])
+          }
+
+          Control {
+            action: root.defrostOn ? "Defrost off" : "Defrost"
+            tooltipText: "Max defrost, front and rear"
+            onClicked: root.act(action, ["defrost", root.defrostOn ? "off" : "on"])
+          }
+        }
+
+        // -------------------------------------------------------- the cabin
+
+        // A setpoint is not a toggle, and the two do not belong in the same
+        // grid. Minus, the number, plus: the number is the control and the
+        // buttons are its ends, which is how every thermostat has worked since
+        // thermostats had buttons.
+        Stepper {
+          width: parent.width
+          label: "cabin"
+          visible: root.hasReading && root.reading.climate_setpoint !== null
+          value: root.hasReading && root.reading.climate_setpoint !== null
+            ? root.reading.climate_setpoint + " " + root.reading.temp_unit : "—"
+          // One degree on the screen, whichever screen it is. A Fahrenheit car
+          // steps a whole degree F and a Celsius one a whole degree C, because
+          // stepping half of somebody else's unit is how you end up at 21.5
+          // when you asked for 22.
+          onDown: root.setTemp(-1)
+          onUp: root.setTemp(1)
+        }
+
+        // The seat heaters that this car actually has. A Model 3 without rear
+        // heaters reports null for them and gets no buttons, rather than three
+        // that do nothing.
+        Row {
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.controlsMode === "Everything"
+            && (root.seatList.length > 0 || root.hasWheelHeater)
+
+          Text {
+            textFormat: Text.PlainText
+            text: "seats"
+            width: Style.space(46)
+            anchors.verticalCenter: parent.verticalCenter
+            font.family: root.fontFamily
+            font.pixelSize: Style.font.caption
+            color: root.foreground
+            opacity: 0.5
+          }
+
+          Repeater {
+            model: root.seatList
+
+            // Each press is one step warmer, and 3 wraps round to off. Four
+            // levels is few enough that cycling beats a menu, and a seat
+            // heater is something you adjust by feel anyway.
+            Button {
+              required property var modelData
+              width: Style.space(52)
+              text: modelData.short + " " + modelData.level
+              tooltipText: modelData.name + ": " + modelData.level + " of 3"
+              bordered: true
+              enabled: root.controlsUsable
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.act(modelData.name,
+                ["seat", modelData.key, String((modelData.level + 1) % 4)])
+            }
+          }
+
+          Button {
+            width: Style.space(64)
+            visible: root.hasWheelHeater
+            text: root.wheelHeaterOn ? "wheel ●" : "wheel"
+            tooltipText: "Steering wheel heater"
+            bordered: true
+            enabled: root.controlsUsable
+            foreground: root.foreground
+            fontFamily: root.fontFamily
+            onClicked: root.act("Wheel heater",
+              ["wheel", root.wheelHeaterOn ? "off" : "on"])
+          }
+        }
+
+        // ------------------------------------------------------- the charge
+
+        Stepper {
+          width: parent.width
+          label: "charge limit"
+          visible: root.hasReading && root.reading.charge_limit !== null
+          value: root.hasReading && root.reading.charge_limit !== null
+            ? root.reading.charge_limit + "%" : "—"
+          // Five at a time. Nobody has ever wanted 81%.
+          onDown: root.setLimit(-5)
+          onUp: root.setLimit(5)
+        }
+
+        Grid {
+          width: parent.width
+          columns: 3
+          columnSpacing: Style.space(6)
+          rowSpacing: Style.space(6)
+          visible: root.controlsMode === "Everything"
+
+          // Starting a charge means nothing without a cable, and Tesla says so
+          // in a word nobody would recognise. Better not to offer it.
+          Control {
+            action: root.charging ? "Stop charge" : "Start charge"
+            enabled: root.controlsUsable && root.pluggedIn
+            tooltipText: root.pluggedIn ? "" : "Nothing is plugged in"
+            onClicked: root.act(action, ["charge", root.charging ? "stop" : "start"])
+          }
+
+          Control {
+            action: root.portOpen ? "Close port" : "Open port"
+            onClicked: root.act(action, ["port", root.portOpen ? "close" : "open"])
+          }
+
+          Control {
+            action: "Garage"
+            tooltipText: "HomeLink, if the car is parked by the door it is paired with"
+            onClicked: root.act(action, ["homelink"])
+          }
+
+          // The two the car will hold the cabin for while you are not in it.
+          // Both are the same switch from Tesla's side, so turning one on
+          // turns the other off, and the labels say which is running.
+          Control {
+            action: root.keeper === 2 ? "Dog off" : "Dog mode"
+            onClicked: root.act(action, ["keeper", root.keeper === 2 ? "off" : "dog"])
+          }
+
+          Control {
+            action: root.keeper === 3 ? "Camp off" : "Camp mode"
+            onClicked: root.act(action, ["keeper", root.keeper === 3 ? "off" : "camp"])
+          }
+
+          Control {
+            action: root.valetOn ? "Valet off" : "Valet"
+            tooltipText: "Limits speed and power, and locks the boot and the glovebox"
+            onClicked: root.act(action, ["valet", root.valetOn ? "off" : "on"])
+          }
+        }
+
+        // What just happened, or what just would not. One line, under the
+        // controls rather than over them, so the panel does not jump when it
+        // appears.
+        Text {
+          textFormat: Text.PlainText
+          width: parent.width
+          visible: text !== ""
+          text: {
+            if (commandProc.running) return root.plain(root.pendingCommand) + "…"
+            if (root.commandError !== "") return root.plain(root.commandError)
+            return ""
+          }
+          wrapMode: Text.WordWrap
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          color: root.commandError !== "" && !commandProc.running
+            ? Color.urgent : root.foreground
+          opacity: root.commandError !== "" && !commandProc.running ? 1.0 : 0.6
+        }
+      }
+
       PanelSeparator { width: parent.width }
 
       // ------------------------------------------------------------ actions
@@ -1043,6 +1435,83 @@ Panel {
         font.pixelSize: Style.font.caption
         color: root.foreground
         opacity: 0.6
+      }
+    }
+  }
+
+  // A control is a button that says what pressing it will do. The state it
+  // reads off lives in the grid above it, so the two never have to be reconciled
+  // in your head: one is the noun, the other is the verb.
+  component Control: Button {
+    property string action: ""
+
+    width: controlGrid.cellWidth
+    text: action
+    bordered: true
+    enabled: root.controlsUsable
+    foreground: root.foreground
+    fontFamily: root.fontFamily
+  }
+
+  // A number with an end at each side. Wider than a pair of buttons needs to
+  // be, because the number is the thing being read and the buttons are only
+  // how you change it.
+  component Stepper: Item {
+    id: stepper
+    property string label: ""
+    property string value: ""
+    signal down()
+    signal up()
+
+    implicitHeight: stepperRow.implicitHeight
+    height: implicitHeight
+
+    Row {
+      id: stepperRow
+      width: parent.width
+      spacing: Style.space(6)
+
+      Text {
+        textFormat: Text.PlainText
+        text: stepper.label
+        width: Style.space(80)
+        anchors.verticalCenter: parent.verticalCenter
+        elide: Text.ElideRight
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        color: root.foreground
+        opacity: 0.5
+      }
+
+      Button {
+        width: Style.space(40)
+        text: "−"
+        bordered: true
+        enabled: root.controlsUsable
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onClicked: stepper.down()
+      }
+
+      Text {
+        textFormat: Text.PlainText
+        text: stepper.value
+        width: Style.space(70)
+        anchors.verticalCenter: parent.verticalCenter
+        horizontalAlignment: Text.AlignHCenter
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+        color: root.foreground
+      }
+
+      Button {
+        width: Style.space(40)
+        text: "+"
+        bordered: true
+        enabled: root.controlsUsable
+        foreground: root.foreground
+        fontFamily: root.fontFamily
+        onClicked: stepper.up()
       }
     }
   }

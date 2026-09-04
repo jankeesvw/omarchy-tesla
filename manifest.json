@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "jankeesvw.tesla",
   "name": "Tesla",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "Jankees van Woezik",
-  "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
+  "description": "Your Tesla in the bar: where it is, how full it is, how far that gets you, and what you can tell it to do",
   "homepage": "https://github.com/jankeesvw/omarchy-tesla",
   "license": "MIT",
   "kinds": [
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Tesla",
-    "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
+    "description": "Your Tesla in the bar: where it is, how full it is, how far that gets you, and what you can tell it to do",
     "category": "Home",
     "allowMultiple": false,
     "defaultSection": "right",
@@ -27,7 +27,8 @@
       "statePollMinutes": 5,
       "parkThrottleMinutes": 15,
       "showAddress": true,
-      "mapsUrl": "https://www.google.com/maps/search/?api=1&query={lat},{lon}"
+      "mapsUrl": "https://www.google.com/maps/search/?api=1&query={lat},{lon}",
+      "controls": "Essentials"
     },
     "schema": [
       {
@@ -36,6 +37,18 @@
         "label": "VIN",
         "defaultValue": "",
         "description": "Which car is initially selected when the account has more than one. Empty picks the first one Tesla lists. Cars can then be switched from the panel."
+      },
+      {
+        "key": "controls",
+        "type": "enum",
+        "label": "Controls",
+        "options": [
+          "Off",
+          "Essentials",
+          "Everything"
+        ],
+        "defaultValue": "Essentials",
+        "description": "What the panel will let you tell the car to do. Every control wakes the car, because a command is answered by the car itself and a sleeping one cannot hear it — that is the opposite of how the readings work, and it is the right way round for something you pressed on purpose. Essentials is locking, sentry, climate, the windows, the boot and the lights. Everything adds charging, the seat heaters, dog and camp mode, valet and HomeLink. Off leaves the panel as something that only looks."
       },
       {
         "key": "mapStyle",
