@@ -220,6 +220,8 @@ Panel {
         root.selectedCarName = data.name || "Tesla"
         root.availableCars = data.vehicles || []
 
+        root.signedProtocol = data.signed === true
+
         var was = root.carState
         root.carState = data.state
 
@@ -463,6 +465,13 @@ Panel {
   // Which controls are offered at all. Off is for anybody who wants the
   // widget to stay a widget that only looks; Everything is the full set.
   readonly property string controlsMode: setting("controls", "Essentials")
+
+  // Whether this car needs its commands signed. Tesla retired the REST command
+  // endpoints for everything but pre-2021 Model S and X, and the signed
+  // protocol that replaced them has no max defrost, no climate keeper, no
+  // HomeLink and no navigation share. Those four are hidden rather than
+  // offered as buttons that can only ever apologise.
+  property bool signedProtocol: false
 
   // A control is usable once there is a reading to base its label on. Before
   // that the panel does not know whether the car is locked, and a button that
@@ -1247,6 +1256,7 @@ Panel {
           }
 
           Control {
+            visible: !root.signedProtocol
             action: root.defrostOn ? "Defrost off" : "Defrost"
             tooltipText: "Max defrost, front and rear"
             onClicked: root.act(action, ["defrost", root.defrostOn ? "off" : "on"])
@@ -1362,6 +1372,7 @@ Panel {
           }
 
           Control {
+            visible: !root.signedProtocol
             action: "Garage"
             tooltipText: "HomeLink, if the car is parked by the door it is paired with"
             onClicked: root.act(action, ["homelink"])
@@ -1371,11 +1382,13 @@ Panel {
           // Both are the same switch from Tesla's side, so turning one on
           // turns the other off, and the labels say which is running.
           Control {
+            visible: !root.signedProtocol
             action: root.keeper === 2 ? "Dog off" : "Dog mode"
             onClicked: root.act(action, ["keeper", root.keeper === 2 ? "off" : "dog"])
           }
 
           Control {
+            visible: !root.signedProtocol
             action: root.keeper === 3 ? "Camp off" : "Camp mode"
             onClicked: root.act(action, ["keeper", root.keeper === 3 ? "off" : "camp"])
           }

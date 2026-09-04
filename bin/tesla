@@ -561,9 +561,16 @@ cmd_state() {
   [ -z "$(api_error)" ] || fail_json "$(api_error)" "$(api_hint)"
   [ -n "$state" ] || state=$(printf '%s' "$vehicle" | jq -r '.state // "unknown"')
 
+  # Which command protocol this car is on, so the panel can stop offering the
+  # four things the signed one has no equivalent for rather than offering
+  # buttons that can only ever come back with an apology.
+  local signed=false
+  signed_mode && signed=true
+
   jq -cn --argjson v "$vehicle" --argjson vehicles "$vehicles" \
+    --argjson signed "$signed" \
     --arg state "$state" --arg at "$(now)" '
-    {ok: true, state: $state, at: ($at|tonumber),
+    {ok: true, state: $state, at: ($at|tonumber), signed: $signed,
       id: ($v.id_s // ($v.id|tostring)), vin: $v.vin,
       name: (if ($v.display_name // "") == "" then "Tesla" else $v.display_name end),
       vehicles: ($vehicles | map({
@@ -867,6 +874,163 @@ cmd_wake() {
 # How long to wait for a woken car to answer for itself. Tesla's own apps give
 # it about this long; a Model 3 on a cold morning is usually there in ten
 # seconds, and one in an underground car park sometimes never is.
+# ------------------------------------------------- the signed command path
+#
+# Tesla retired the REST command endpoints. As of the 2023-10-09 announcement,
+# `POST /api/1/vehicles/{id}/command/...` answers 403 with
+#
+#   Tesla Vehicle Command Protocol required
+#
+# for everything except pre-2021 Model S and X, which stay on REST forever.
+# Every other car — this includes every Model 3 and Y — now requires commands
+# to be signed end to end with a key the *car itself* has whitelisted. Tesla's
+# servers are no longer the authority; the car is.
+#
+# So there are two command paths here, and which one runs is decided by
+# whether a command key exists on this machine:
+#
+#   command-key.pem present -> sign, and send via Tesla's own `tesla-control`
+#   absent                  -> the old REST call, for the exempt S and X
+#
+# Signing is not something to reimplement. It is a protobuf dialect over an
+# authenticated session with a replay counter, and Tesla ships the reference
+# implementation. `tesla-control` is that implementation, and it is what runs.
+#
+# Enrolling the key is the one step that cannot happen from here: somebody has
+# to be at the car with the NFC card. `tesla enroll` starts it.
+
+COMMAND_KEY="$CONFIG_DIR/command-key.pem"
+COMMAND_PUBKEY="$CONFIG_DIR/command-key.pub.pem"
+FLEET_TOKEN_FILE="$CONFIG_DIR/fleet-token"
+
+signed_mode() { [ -r "$COMMAND_KEY" ]; }
+
+have_tesla_control() { command -v tesla-control >/dev/null 2>&1; }
+
+# The VIN the signed path addresses the car by. BLE has no account behind it —
+# it finds the car by a name derived from the VIN — so this must not depend on
+# the owner API being reachable. Configured VIN first, then the last reading,
+# then and only then ask Tesla.
+signed_vin() {
+  local vehicle vin
+
+  if [ -n "$VIN" ]; then printf '%s' "$VIN"; return 0; fi
+
+  vin=$(find "$CACHE_DIR/cars" -name '*.json' -print0 2>/dev/null \
+        | xargs -0 -r jq -r '.vin // empty' 2>/dev/null | head -n1)
+  if [ -n "$vin" ]; then printf '%s' "$vin"; return 0; fi
+
+  vehicle=$(vehicle_json 2>/dev/null) || return 1
+  vin=$(printf '%s' "$vehicle" | jq -r '.vin // empty')
+  [ -n "$vin" ] || return 1
+  printf '%s' "$vin"
+}
+
+# BLE unless there is a Fleet API token to go over the internet with. BLE is
+# the honest default: it needs no developer account, no hosted public key and
+# no third party, and it works in a garage with no signal. What it needs is to
+# be within Bluetooth range of the car.
+tesla_control() {
+  local vin
+  vin=$(signed_vin) || { printf 'no VIN\n' >&2; return 90; }
+
+  if [ -r "$FLEET_TOKEN_FILE" ]; then
+    tesla-control -vin "$vin" -key-file "$COMMAND_KEY" \
+      -token-file "$FLEET_TOKEN_FILE" \
+      -connect-timeout 30s -command-timeout 20s "$@" 2>&1
+  else
+    tesla-control -ble -vin "$vin" -key-file "$COMMAND_KEY" \
+      -connect-timeout 30s -command-timeout 20s "$@" 2>&1
+  fi
+}
+
+# tesla-control reports failure in prose on stderr and, maddeningly, exits 0
+# for some of it. So the output is what gets read, and the three answers worth
+# recognising are turned into sentences. Everything else is passed through as
+# it came, because a message we have not seen before is still better than
+# "something went wrong".
+signed_hint() {
+  case "$1" in
+    *INSUFFICIENT_PRIVILEGES*|*"not on the whitelist"*|*unauthorized*|*"has not been paired"*)
+      printf '%s' "this key is not enrolled in the car — run: tesla enroll" ;;
+    *"Failed to initialize BLE"*|*"can't init hci"*)
+      printf '%s' "tesla-control needs CAP_NET_ADMIN: sudo setcap 'cap_net_admin,cap_net_raw=eip' \$(which tesla-control)" ;;
+    *"context deadline exceeded"*|*"failed to find"*|*"no devices"*|*timeout*)
+      printf '%s' "the car did not answer over Bluetooth — it has to be within about ten metres" ;;
+    *"Unrecognized command"*|*"Usage:"*)
+      printf '%s' "this car does not take that command over the signed protocol" ;;
+    *) printf '' ;;
+  esac
+}
+
+# One signed command. The arguments are tesla-control's own, verbatim, because
+# translating them twice is one more place to get a seat number wrong.
+run_signed() {
+  local patch="$1"; shift
+  local output vehicle
+
+  if [ $# -eq 0 ]; then
+    fail_json "not available on this car" \
+      "Tesla's signed command protocol has no equivalent for this one"
+  fi
+
+  have_tesla_control || fail_json "tesla-control is not installed" \
+    "build it from github.com/teslamotors/vehicle-command and put it on PATH"
+
+  output=$(tesla_control "$@")
+
+  # Silence is success. tesla-control prints nothing at all when a command
+  # lands, and anything on the way out is a complaint.
+  if [ -n "$output" ]; then
+    local hint
+    hint=$(signed_hint "$output")
+    fail_json "$(printf '%s' "$output" | head -n1)" "$hint"
+  fi
+
+  vehicle=$(vehicle_json 2>/dev/null) && patch_car_cache "$vehicle" "$patch"
+  jq -cn --arg command "$1" '{ok: true, command: $command, done: true, signed: true}'
+}
+
+# Start enrolling this machine's key in the car. Everything up to the tap
+# happens here; the tap itself is somebody standing at the car with the black
+# NFC card, holding it against the centre console when asked. There is no way
+# to do that remotely, and that is the point of the whole protocol.
+cmd_enroll() {
+  local vin output
+
+  have_tesla_control || die "tesla-control is not installed. Build it from github.com/teslamotors/vehicle-command"
+  [ -r "$COMMAND_KEY" ] || die "no command key yet. Run: tesla-keygen -key-file $COMMAND_KEY create > $COMMAND_PUBKEY"
+
+  vin=$(signed_vin) || die "no VIN to enrol against. Pass --vin"
+
+  printf 'Enrolling this machine as a driver key on %s.\n\n' "$vin" >&2
+  printf 'Be at the car. When this says so, hold your black NFC key card\n' >&2
+  printf 'against the centre console, just behind the cup holders.\n\n' >&2
+
+  output=$(tesla-control -ble -vin "$vin" \
+    -connect-timeout 40s -command-timeout 30s \
+    add-key-request "$COMMAND_KEY" owner cloud_key 2>&1)
+
+  if [ -n "$output" ]; then
+    printf '%s\n' "$output" >&2
+    printf '\nThat did not take. %s\n' "$(signed_hint "$output")" >&2
+    exit 1
+  fi
+
+  printf 'Enrolled. Check it with: tesla keys\n' >&2
+}
+
+# What the car thinks is allowed to talk to it. Worth reading after an enrol,
+# and worth reading before assuming a refusal is anything cleverer than a key
+# that never landed.
+cmd_keys() {
+  local vin
+  have_tesla_control || die "tesla-control is not installed"
+  vin=$(signed_vin) || die "no VIN. Pass --vin"
+  tesla-control -ble -vin "$vin" -key-file "$COMMAND_KEY" \
+    -connect-timeout 30s list-keys
+}
+
 # Overridable so the tests can watch a car fail to wake without waiting the
 # full three-quarters of a minute for it.
 WAKE_TIMEOUT=$(number_or "${OMARCHY_TESLA_WAKE_TIMEOUT:-}" 45)
@@ -922,7 +1086,15 @@ patch_car_cache() {
 # that is standing there with its doors open.
 send_command() {
   local endpoint="$1" payload="${2-}" patch="${3-}"
+  shift 3
   local vehicle id response result reason
+
+  # The car decides, not Tesla's servers. Anything but a pre-2021 S or X needs
+  # the command signed, and on this machine that means a command key exists.
+  if signed_mode; then
+    run_signed "$patch" "$@"
+    return
+  fi
 
   vehicle=$(vehicle_json) || fail_json "$(vehicle_error)" "$(vehicle_hint)"
   id=$(printf '%s' "$vehicle" | jq -r '.id_s // (.id|tostring)')
@@ -1044,22 +1216,22 @@ cached_position() {
 # ---------------------------------------------------------------- doors
 
 cmd_lock() {
-  send_command door_lock '' '.locked = true'
+  send_command door_lock '' '.locked = true' lock
 }
 
 cmd_unlock() {
-  send_command door_unlock '' '.locked = false'
+  send_command door_unlock '' '.locked = false' unlock
 }
 
 # One command for both, because on a Model 3 the boot is a lid that goes both
 # ways and the car decides which. `trunk` and `frunk` are separate words only
 # because nobody has ever asked to "actuate the trunk".
 cmd_trunk() {
-  send_command actuate_trunk "$(jq -cn '{which_trunk: "rear"}')"
+  send_command actuate_trunk "$(jq -cn '{which_trunk: "rear"}')" '' trunk-move
 }
 
 cmd_frunk() {
-  send_command actuate_trunk "$(jq -cn '{which_trunk: "front"}')"
+  send_command actuate_trunk "$(jq -cn '{which_trunk: "front"}')" '' frunk-open
 }
 
 # Vent ignores the position; close will not happen unless Tesla believes you
@@ -1081,9 +1253,13 @@ cmd_windows() {
     lon=${position##* }
   fi
 
+  # The signed protocol asks for no position: the car knows the phone-key or
+  # the Bluetooth radio talking to it is next to it, which is the same
+  # proximity check the coordinates were standing in for over REST.
   send_command window_control \
     "$(jq -cn --arg c "$action" --arg lat "$lat" --arg lon "$lon" \
-        '{command: $c, lat: ($lat|tonumber), lon: ($lon|tonumber)}')"
+        '{command: $c, lat: ($lat|tonumber), lon: ($lon|tonumber)}')" \
+    '' "windows-$action"
 }
 
 # --------------------------------------------------------------- security
@@ -1092,7 +1268,8 @@ cmd_sentry() {
   local on
   on=$(want_on "${1-}" sentry)
   send_command set_sentry_mode "$(jq -cn --argjson on "$on" '{on: $on}')" \
-    "$(printf '.sentry = %s' "$on")"
+    "$(printf '.sentry = %s' "$on")" \
+    sentry-mode "$(if [ "$on" = true ]; then printf on; else printf off; fi)"
 }
 
 # Valet mode takes a PIN only when you are setting one; Tesla accepts the
@@ -1107,10 +1284,15 @@ cmd_valet() {
       [0-9][0-9][0-9][0-9]) ;;
       *) die "the valet PIN is four digits" ;;
     esac
+    # The signed protocol has no PIN argument: valet-mode-on uses the PIN the
+    # car already has. Setting a new one is a REST-era trick, and passing the
+    # PIN on anyway would be passing it nowhere.
     send_command set_valet_mode \
-      "$(jq -cn --argjson on "$on" --arg pin "$pin" '{on: $on, password: $pin}')"
+      "$(jq -cn --argjson on "$on" --arg pin "$pin" '{on: $on, password: $pin}')" \
+      '' "valet-mode-$(if [ "$on" = true ]; then printf on; else printf off; fi)"
   else
-    send_command set_valet_mode "$(jq -cn --argjson on "$on" '{on: $on}')"
+    send_command set_valet_mode "$(jq -cn --argjson on "$on" '{on: $on}')" \
+      '' "valet-mode-$(if [ "$on" = true ]; then printf on; else printf off; fi)"
   fi
 }
 
@@ -1119,7 +1301,7 @@ cmd_valet() {
 # panel's own controls: a button that lets the car be driven away is not one
 # to put next to "flash the lights".
 cmd_drive() {
-  send_command remote_start_drive
+  send_command remote_start_drive '' '' drive
 }
 
 # ---------------------------------------------------------------- climate
@@ -1128,9 +1310,9 @@ cmd_climate() {
   local on
   on=$(want_on "${1-}" climate)
   if [ "$on" = "true" ]; then
-    send_command auto_conditioning_start '' '.climate_on = true'
+    send_command auto_conditioning_start '' '.climate_on = true' climate-on
   else
-    send_command auto_conditioning_stop '' '.climate_on = false'
+    send_command auto_conditioning_stop '' '.climate_on = false' climate-off
   fi
 }
 
@@ -1148,12 +1330,16 @@ cmd_temp() {
   celsius=$(jq -rn --argjson t "$celsius" '$t * 2 | round / 2')
   send_command set_temps \
     "$(jq -cn --argjson t "$celsius" '{driver_temp: $t, passenger_temp: $t}')" \
-    "$(printf '.climate_setpoint_c = %s' "$celsius")"
+    "$(printf '.climate_setpoint_c = %s' "$celsius")" \
+    climate-set-temp "${celsius}c"
 }
 
 cmd_defrost() {
   local on
   on=$(want_on "${1-}" defrost)
+  # No signed equivalent. tesla-control has no max-defrost command, so on any
+  # car that needs signing this is honestly unavailable rather than quietly
+  # broken.
   send_command set_preconditioning_max "$(jq -cn --argjson on "$on" '{on: $on}')" \
     "$(printf '.defrost = %s' "$on")"
 }
@@ -1169,6 +1355,7 @@ cmd_keeper() {
     camp)  mode=3 ;;
     *) die "keeper wants off, keep, dog or camp" ;;
   esac
+  # No signed equivalent either, for the same reason as defrost.
   send_command set_climate_keeper_mode \
     "$(jq -cn --argjson m "$mode" '{climate_keeper_mode: $m}')" \
     "$(printf '.climate_keeper = %s' "$mode")"
@@ -1191,8 +1378,23 @@ cmd_seat() {
   level=$(whole_number "${2-}" seat)
   [ "$level" -le 3 ] || die "a seat heater goes from 0 to 3"
 
+  # The two protocols name the same seat differently, and neither name is
+  # wrong. REST counts with a hole at 3; the signed one spells out the row.
+  local tc_seat tc_level
+  case "${1-}" in
+    front-left|driver)   tc_seat=front-left ;;
+    front-right|passenger) tc_seat=front-right ;;
+    rear-left)           tc_seat=2nd-row-left ;;
+    rear-center|rear-centre) tc_seat=2nd-row-center ;;
+    rear-right)          tc_seat=2nd-row-right ;;
+  esac
+  case "$level" in
+    0) tc_level=off ;; 1) tc_level=low ;; 2) tc_level=medium ;; 3) tc_level=high ;;
+  esac
+
   send_command remote_seat_heater_request \
-    "$(jq -cn --argjson h "$seat" --argjson l "$level" '{heater: $h, level: $l}')"
+    "$(jq -cn --argjson h "$seat" --argjson l "$level" '{heater: $h, level: $l}')" \
+    '' seat-heater "$tc_seat" "$tc_level"
 }
 
 cmd_wheel() {
@@ -1200,23 +1402,24 @@ cmd_wheel() {
   on=$(want_on "${1-}" wheel)
   send_command remote_steering_wheel_heater_request \
     "$(jq -cn --argjson on "$on" '{on: $on}')" \
-    "$(printf '.wheel_heater = %s' "$on")"
+    "$(printf '.wheel_heater = %s' "$on")" \
+    steering-wheel-heater "$(if [ "$on" = true ]; then printf on; else printf off; fi)"
 }
 
 # --------------------------------------------------------------- charging
 
 cmd_charge() {
   case "${1-}" in
-    start) send_command charge_start '' '.charging = "Charging"' ;;
-    stop)  send_command charge_stop '' '.charging = "Stopped"' ;;
+    start) send_command charge_start '' '.charging = "Charging"' charging-start ;;
+    stop)  send_command charge_stop '' '.charging = "Stopped"' charging-stop ;;
     *) die "charge wants start or stop" ;;
   esac
 }
 
 cmd_port() {
   case "${1-}" in
-    open)  send_command charge_port_door_open ;;
-    close) send_command charge_port_door_close ;;
+    open)  send_command charge_port_door_open '' '' charge-port-open ;;
+    close) send_command charge_port_door_close '' '' charge-port-close ;;
     *) die "port wants open or close" ;;
   esac
 }
@@ -1229,7 +1432,8 @@ cmd_limit() {
   [ "$percent" -ge 50 ] && [ "$percent" -le 100 ] \
     || die "the charge limit goes from 50 to 100"
   send_command set_charge_limit "$(jq -cn --argjson p "$percent" '{percent: $p}')" \
-    "$(printf '.charge_limit = %s' "$percent")"
+    "$(printf '.charge_limit = %s' "$percent")" \
+    charging-set-limit "$percent"
 }
 
 # Amps, for a car on a household socket that is tripping something. The car
@@ -1239,13 +1443,14 @@ cmd_amps() {
   local amps
   amps=$(whole_number "${1-}" amps)
   [ "$amps" -ge 1 ] && [ "$amps" -le 80 ] || die "charging amps go from 1 to 80"
-  send_command set_charging_amps "$(jq -cn --argjson a "$amps" '{charging_amps: $a}')"
+  send_command set_charging_amps "$(jq -cn --argjson a "$amps" '{charging_amps: $a}')" \
+    '' charging-set-amps "$amps"
 }
 
 # ------------------------------------------------------------------ alerts
 
-cmd_horn()  { send_command honk_horn; }
-cmd_flash() { send_command flash_lights; }
+cmd_horn()  { send_command honk_horn '' '' honk; }
+cmd_flash() { send_command flash_lights '' '' flash-lights; }
 
 # The garage door, and only the one the car is standing in front of. Tesla
 # checks the position itself and refuses from anywhere else, which is the
@@ -1256,6 +1461,7 @@ cmd_homelink() {
     || fail_json "no position" "HomeLink needs to know where the car is — refresh the panel first"
   lat=${position%% *}
   lon=${position##* }
+  # No signed equivalent; HomeLink stayed behind on REST.
   send_command trigger_homelink \
     "$(jq -cn --arg lat "$lat" --arg lon "$lon" '{lat: ($lat|tonumber), lon: ($lon|tonumber)}')"
 }
@@ -1266,6 +1472,7 @@ cmd_homelink() {
 cmd_nav() {
   local destination="$*"
   [ -n "$destination" ] || die "nav wants somewhere to go"
+  # No signed equivalent; navigation sharing stayed behind on REST too.
   send_command share \
     "$(jq -cn --arg d "$destination" --arg ms "$(( $(now) * 1000 ))" '
         {type: "share_ext_content_raw",
@@ -1522,6 +1729,10 @@ case "$command" in
   flash)    cmd_flash ;;
   homelink) cmd_homelink ;;
   nav)      cmd_nav "$@" ;;
+
+  # The signed protocol's own housekeeping.
+  enroll|enrol) cmd_enroll ;;
+  keys)     cmd_keys ;;
 
   *)      die "unknown command $command" ;;
 esac
