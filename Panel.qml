@@ -636,6 +636,12 @@ Panel {
   // Doors, boot and windows, as one sentence, and only when there is one to
   // make. Nearly always empty, which is exactly what earns it a place: a line
   // that is usually absent gets read on the day it appears.
+  // How fresh a reading has to be before this line is allowed to speak in the
+  // present tense. The fetcher drops to a one-minute throttle whenever
+  // something is standing open, so anything inside three minutes is a reading
+  // that had a chance to be replaced and was not.
+  readonly property int openAssertAge: 180
+
   readonly property string openText: {
     if (!hasReading || !reading.open || reading.open.length === 0) return ""
     var items = reading.open.map(function(item) {
@@ -644,9 +650,24 @@ Panel {
     var list = items.length === 1
       ? items[0]
       : items.slice(0, -1).join(", ") + " and " + items[items.length - 1]
-    return list.charAt(0).toUpperCase() + list.slice(1)
-      + (items.length === 1 ? " is open" : " are open")
+    var opening = list.charAt(0).toUpperCase() + list.slice(1)
+
+    // Present tense only from a reading recent enough to mean it. This line is
+    // the panel's alarm, and an alarm that fires off a quarter-hour-old reading
+    // is an alarm you learn to ignore — which is what it did every time the car
+    // was read at the moment you climbed out of it and then left alone by the
+    // park throttle. Old readings still get to speak, but in the past tense and
+    // carrying their age, which is a different claim and a true one.
+    if (root.readingAge > root.openAssertAge)
+      return opening + " was open " + agoOf(root.readingAge) + " ago"
+
+    return opening + (items.length === 1 ? " is open" : " are open")
   }
+
+  // Only a live opening is urgent. A stale one is a note, not an alarm, and
+  // colouring it the same red is how the red stops meaning anything.
+  readonly property bool openIsLive:
+    openText !== "" && readingAge <= openAssertAge
 
   // Where it is going, when it is going somewhere. A route set on a parked car
   // is not a journey, so this only speaks while the car is moving; the rest of
@@ -1162,7 +1183,7 @@ Panel {
         wrapMode: Text.WordWrap
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
-        color: Color.urgent
+        color: root.openIsLive ? Color.urgent : Qt.darker(root.foreground, 1.5)
       }
 
       // ----------------------------------------------------------- controls

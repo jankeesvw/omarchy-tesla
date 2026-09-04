@@ -92,6 +92,18 @@ DRIVE_THROTTLE=10
 # itself, so reading it costs nothing it was not already spending, and the
 # percentage is the one number worth watching climb.
 CHARGE_THROTTLE=60
+# Seconds between readings while something on the car is standing open. A door,
+# a frunk or a boot left open is the one thing that holds a car awake by itself
+# and that the panel shouts about, so the reading that says so is also the
+# reading most worth replacing. Without this exception a car read at the moment
+# you climbed out spends the next quarter of an hour telling you a door is open
+# because the park throttle refuses to look again — the panel's loudest line,
+# stuck on, every single time you park.
+#
+# Windows are deliberately not in this: a vented window does not hold the car
+# awake, so polling for one is exactly the harm the park throttle exists to
+# prevent.
+OPEN_THROTTLE=60
 VIN=""
 TILE_URL="https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
 FORCE=0
@@ -778,16 +790,21 @@ cmd_car() {
   # with the doors just closed is online for another quarter of an hour, and
   # asking it anything during that window is what stops it dropping off.
   if [ "$FORCE" -ne 1 ] && [ -n "$cached" ]; then
-    local age driving charging throttle
+    local age driving charging standing_open throttle
     age=$(( $(now) - $(number_or "$(printf '%s' "$cached" | jq -r '.at // empty' 2>/dev/null)" 0) ))
     driving=$(printf '%s' "$cached" | jq -r '.driving // false')
     charging=$(printf '%s' "$cached" | jq -r '.charging // "Unknown"')
+    # A window does not hold a car awake; a door, a frunk or a boot does. Only
+    # those earn the exception, so the summary is filtered rather than counted.
+    standing_open=$(printf '%s' "$cached" \
+      | jq -r '[(.open // [])[] | select(. != "a window")] | length > 0' 2>/dev/null)
 
-    # Both exceptions are the same argument: the car is being held awake by
+    # Every exception is the same argument: the car is being held awake by
     # something that is not us, so a reading costs nothing it was not already
     # spending. Everything else waits out the park throttle.
     throttle=$(number_or "$PARK_THROTTLE" 900)
     [ "$charging" = "Charging" ] && throttle=$CHARGE_THROTTLE
+    [ "$standing_open" = "true" ] && throttle=$OPEN_THROTTLE
     [ "$driving" = "true" ] && throttle=$DRIVE_THROTTLE
 
     if [ "$age" -lt "$throttle" ]; then

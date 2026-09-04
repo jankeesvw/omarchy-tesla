@@ -1,0 +1,125 @@
+#!/usr/bin/env bash
+#
+# The park throttle, and the one thing that has to be exempt from it.
+#
+# A car read at the moment you climb out of it reports a door open. The park
+# throttle then refuses to look again for a quarter of an hour, so the panel
+# spends that quarter of an hour asserting, in the present tense, that a door
+# is open — its loudest line, wrong, every single time you park.
+#
+# A door, frunk or boot standing open holds the car awake by itself, so reading
+# it again costs nothing the car was not already spending. That is the same
+# argument the driving and charging exemptions already make.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TESLA="$ROOT/bin/tesla"
+TEST_TMP=$(mktemp -d)
+trap 'rm -rf -- "$TEST_TMP"' EXIT
+
+mkdir -p "$TEST_TMP/bin"
+ln -s "$ROOT/test/mock-curl-throttle" "$TEST_TMP/bin/curl"
+
+CONFIG="$TEST_TMP/config"
+CACHE="$TEST_TMP/cache"
+LOG="$TEST_TMP/curl.log"
+mkdir -p "$CONFIG" "$CACHE"
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+jwt() {
+  local payload
+  payload=$(jq -cn '{iss: "https://auth.tesla.com/oauth2/v3"}' \
+    | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  printf 'e30.%s.test-signature' "$payload"
+}
+
+TOKEN=$(jwt)
+
+run() {
+  env \
+    PATH="$TEST_TMP/bin:$PATH" \
+    OMARCHY_TESLA_CONFIG_DIR="$CONFIG" \
+    OMARCHY_TESLA_CACHE_DIR="$CACHE" \
+    MOCK_CURL_LOG="$LOG" \
+    MOCK_ACCESS_TOKEN="$TOKEN" \
+    MOCK_REFRESH_TOKEN="$TOKEN" \
+    "$TESLA" "$@"
+}
+
+printf '%s\n' "$TOKEN" | run token >/dev/null
+
+# One real read, so the cache exists and is shaped the way the fetcher writes
+# it — rather than this test inventing a shape the code never produces.
+: > "$LOG"
+run car >/dev/null
+CACHE_FILE=$(find "$CACHE/cars" -name '*.json' | head -1)
+[ -n "$CACHE_FILE" ] || fail "no cache was written"
+
+# Rewrite that reading into the one the bug was about: taken four minutes ago,
+# well inside the fifteen-minute park throttle, claiming a door is open.
+seed() {
+  local age="$1" open="$2" tmp="$TEST_TMP/seed.json"
+  jq -c --argjson age "$age" --argjson open "$open" \
+    '.at = (now | floor) - $age | .open = $open | .driving = false | .charging = "Disconnected"' \
+    "$CACHE_FILE" > "$tmp"
+  mv "$tmp" "$CACHE_FILE"
+}
+
+fetched() {
+  grep -cF 'vehicle_data' "$LOG" 2>/dev/null || true
+}
+
+# ---- a door standing open is looked at again -------------------------------
+
+seed 240 '["a door"]'
+: > "$LOG"
+output=$(run car)
+
+[ "$(fetched)" -gt 0 ] \
+  || fail "a car with a door open was not re-read inside the park throttle"
+[ "$(printf '%s' "$output" | jq -r '.open | length')" = 0 ] \
+  || fail "the stale door-open reading was served instead of a fresh one"
+printf 'ok - a standing-open door is re-read inside the park throttle\n'
+
+# ---- a shut, parked car is still left alone --------------------------------
+#
+# The exemption must not become "poll always": holding a parked car awake is
+# the whole thing the park throttle exists to prevent.
+
+seed 240 '[]'
+: > "$LOG"
+run car >/dev/null
+
+[ "$(fetched)" -eq 0 ] \
+  || fail "a shut parked car was re-read inside the park throttle"
+printf 'ok - a shut parked car is still left alone\n'
+
+# ---- a vented window is not a reason to poll -------------------------------
+#
+# A window off its seal does not hold the car awake, so polling for one is
+# exactly the harm the throttle prevents. It stays inside the throttle.
+
+seed 240 '["a window"]'
+: > "$LOG"
+run car >/dev/null
+
+[ "$(fetched)" -eq 0 ] \
+  || fail "a vented window re-read the car inside the park throttle"
+printf 'ok - a vented window alone does not defeat the park throttle\n'
+
+# ---- and an old enough reading is refreshed regardless ----------------------
+
+seed 1200 '[]'
+: > "$LOG"
+run car >/dev/null
+
+[ "$(fetched)" -gt 0 ] \
+  || fail "a reading past the park throttle was not refreshed"
+printf 'ok - a reading past the park throttle is refreshed\n'
+
+printf 'throttle tests passed\n'

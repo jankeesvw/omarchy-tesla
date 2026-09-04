@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+#
+# An online car with everything shut. Paired with test/throttle, which seeds a
+# cache that claims a door is open and then checks whether the fetcher goes and
+# looks again.
+
+set -euo pipefail
+
+url=""
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$MOCK_CURL_LOG"
+  case "$arg" in
+    https://*) url="$arg" ;;
+  esac
+done
+
+# Consume the curl config and any request body from stdin without recording
+# either: both carry credentials in the real client.
+if [ ! -t 0 ]; then
+  while IFS= read -r _; do :; done
+fi
+
+case "$url" in
+  */oauth2/v3/token)
+    jq -cn --arg access "$MOCK_ACCESS_TOKEN" --arg refresh "$MOCK_REFRESH_TOKEN" \
+      '{access_token: $access, refresh_token: $refresh, expires_in: 28800}'
+    ;;
+  */api/1/products)
+    jq -cn '{response: [{id: 1, id_s: "1", vin: "TESTVIN", state: "online"}]}'
+    ;;
+  */api/1/vehicles/1)
+    jq -cn '{response: {state: "online"}}'
+    ;;
+  */api/1/vehicles/1/vehicle_data*)
+    jq -cn '{response: {
+      vin: "TESTVIN",
+      gui_settings: {gui_distance_units: "mi/hr", gui_temperature_units: "F",
+                     gui_range_display: "Rated", gui_tirepressure_units: "Psi"},
+      drive_state: {latitude: 33.75, longitude: -84.39, heading: 90, gps_as_of: 1,
+                    shift_state: null, speed: null},
+      charge_state: {battery_level: 66, charge_limit_soc: 95,
+                     charging_state: "Disconnected", battery_range: 156.7,
+                     charge_port_door_open: false, charge_current_request: 48,
+                     charge_current_request_max: 48},
+      vehicle_state: {vehicle_name: "Test", locked: true, sentry_mode: true,
+                      valet_mode: false, car_version: "2026.32.5",
+                      df: 0, dr: 0, pf: 0, pr: 0, ft: 0, rt: 0,
+                      fd_window: 0, fp_window: 0, rd_window: 0, rp_window: 0},
+      climate_state: {is_climate_on: false, driver_temp_setting: 19.5,
+                      defrost_mode: 0, climate_keeper_mode: 0,
+                      steering_wheel_heater: null,
+                      seat_heater_left: 0, seat_heater_right: 0,
+                      seat_heater_rear_left: null, seat_heater_rear_center: null,
+                      seat_heater_rear_right: null},
+      vehicle_config: {car_type: "model3"}
+    }}'
+    ;;
+  *)
+    printf 'unexpected mock curl URL: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac
