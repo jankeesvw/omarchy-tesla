@@ -905,7 +905,26 @@ FLEET_TOKEN_FILE="$CONFIG_DIR/fleet-token"
 
 signed_mode() { [ -r "$COMMAND_KEY" ]; }
 
-have_tesla_control() { command -v tesla-control >/dev/null 2>&1; }
+# The panel spawns this script from the shell, and the shell's PATH is not a
+# login shell's: it has no ~/go/bin in it, which is exactly where a Go tool
+# lands. Resolving it here rather than trusting PATH is the difference between
+# the buttons working and the buttons working only from a terminal.
+TESLA_CONTROL="${OMARCHY_TESLA_CONTROL:-}"
+resolve_tesla_control() {
+  [ -n "$TESLA_CONTROL" ] && return 0
+  local candidate
+  for candidate in "$(command -v tesla-control 2>/dev/null)" \
+                   "$HOME/go/bin/tesla-control" \
+                   /usr/local/bin/tesla-control /usr/bin/tesla-control; do
+    if [ -n "$candidate" ] && [ -x "$candidate" ]; then
+      TESLA_CONTROL="$candidate"
+      return 0
+    fi
+  done
+  return 1
+}
+
+have_tesla_control() { resolve_tesla_control; }
 
 # The VIN the signed path addresses the car by. BLE has no account behind it —
 # it finds the car by a name derived from the VIN — so this must not depend on
@@ -932,14 +951,15 @@ signed_vin() {
 # be within Bluetooth range of the car.
 tesla_control() {
   local vin
+  resolve_tesla_control || { printf 'tesla-control is not installed\n' >&2; return 91; }
   vin=$(signed_vin) || { printf 'no VIN\n' >&2; return 90; }
 
   if [ -r "$FLEET_TOKEN_FILE" ]; then
-    tesla-control -vin "$vin" -key-file "$COMMAND_KEY" \
+    "$TESLA_CONTROL" -vin "$vin" -key-file "$COMMAND_KEY" \
       -token-file "$FLEET_TOKEN_FILE" \
       -connect-timeout 30s -command-timeout 20s "$@" 2>&1
   else
-    tesla-control -ble -vin "$vin" -key-file "$COMMAND_KEY" \
+    "$TESLA_CONTROL" -ble -vin "$vin" -key-file "$COMMAND_KEY" \
       -connect-timeout 30s -command-timeout 20s "$@" 2>&1
   fi
 }
@@ -1007,7 +1027,7 @@ cmd_enroll() {
   printf 'Be at the car. When this says so, hold your black NFC key card\n' >&2
   printf 'against the centre console, just behind the cup holders.\n\n' >&2
 
-  output=$(tesla-control -ble -vin "$vin" \
+  output=$("$TESLA_CONTROL" -ble -vin "$vin" \
     -connect-timeout 40s -command-timeout 30s \
     add-key-request "$COMMAND_KEY" owner cloud_key 2>&1)
 
@@ -1027,7 +1047,7 @@ cmd_keys() {
   local vin
   have_tesla_control || die "tesla-control is not installed"
   vin=$(signed_vin) || die "no VIN. Pass --vin"
-  tesla-control -ble -vin "$vin" -key-file "$COMMAND_KEY" \
+  "$TESLA_CONTROL" -ble -vin "$vin" -key-file "$COMMAND_KEY" \
     -connect-timeout 30s list-keys
 }
 
