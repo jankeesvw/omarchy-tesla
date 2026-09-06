@@ -261,7 +261,14 @@ Panel {
         root.errorText = data.error || ""
         root.errorHint = data.hint || ""
         if (data.ok !== true) return
-        if (!data.fixture && data.vin && String(data.vin) !== root.selectedVin) return
+        // Same rule the state poll uses: an unset VIN means Tesla's first car,
+        // so the first answer names it rather than being thrown away for not
+        // matching a choice nobody has made yet. Without this, a reading that
+        // lands before the state poll has picked the car is discarded, and at
+        // startup that is the only reading there is.
+        if (!data.fixture && root.selectedVin !== ""
+            && String(data.vin) !== root.selectedVin) return
+        if (root.selectedVin === "" && data.vin) root.selectedVin = String(data.vin)
         root.reading = data
       }
     }
@@ -300,6 +307,15 @@ Panel {
     stateProc.running = true
     refresh(false)
   }
+
+  // One reading at startup, so the bar has its number from the moment the
+  // shell comes up instead of a placeholder mark until somebody opens the
+  // panel. This is not a new question asked of the car: a parked car is
+  // asleep, and `tesla car` answers for a sleeping car out of the reading
+  // already on disk without touching it. The only case that reaches Tesla is
+  // a car that is already awake and past the throttle, which is the same call
+  // opening the panel would make.
+  Component.onCompleted: refresh(false)
 
   // Only while the car is awake on somebody else's account. A parked car gets
   // nothing from here at all, which is the point: fifteen minutes of being
