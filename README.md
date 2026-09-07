@@ -255,14 +255,27 @@ Middle-clicking the bar icon does the same without opening the panel.
 
 ## Where the map comes from
 
-Tiles come from [CARTO](https://carto.com/basemaps)'s dark and light basemaps,
-built on [OpenStreetMap](https://www.openstreetmap.org/) data, and the address
-from OpenStreetMap's [Nominatim](https://nominatim.org/). All three are free
-and none of them needs a key.
+Tiles come from [OpenStreetMap](https://www.openstreetmap.org/) and the address
+from OpenStreetMap's [Nominatim](https://nominatim.org/). Both are free and
+neither needs a key.
 
-The map follows your theme: a light theme gets the light basemap, a dark one
-gets the dark. That is what **Auto** does, and it is the default because a dark
-map dropped into a light panel is a hole in it.
+It used to be CARTO's dark and light basemaps, which read better behind a
+marker. CARTO now enforces an API key on those, and a keyless request comes
+back with "API KEY NEEDED" stamped across the map, so the default moved to the
+tiles that stay free without an account.
+
+OpenStreetMap ships one style and it is a pale one, so **Dark** is that same
+map turned dark rather than a different basemap. Black laid over the top was
+the obvious way and it looks it: white goes to grey while the yellows and
+greens stay just as loud underneath. What the panel does instead is what
+OpenStreetMap's own site does for its dark mode, invert the tiles and then turn
+the hue a half circle, so the colours that survived the inversion land back
+where they started. Water stays blue, parks stay green, and the paper the map
+is printed on goes black.
+
+**Auto** follows your theme and is the default, because a light map inside a
+dark panel is a torch in the face and a dark one inside a light panel is a hole
+in it.
 
 Everything painted over the tiles is coloured off the map rather than off the
 theme, for the same reason: the marker's ring and the attribution have to

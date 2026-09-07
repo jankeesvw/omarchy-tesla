@@ -105,7 +105,7 @@ CHARGE_THROTTLE=60
 # prevent.
 OPEN_THROTTLE=60
 VIN=""
-TILE_URL="https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
+TILE_URL="https://tile.openstreetmap.org/{z}/{x}/{y}.png"
 FORCE=0
 
 die() { printf 'tesla: %s\n' "$*" >&2; exit 1; }
@@ -1588,7 +1588,7 @@ cmd_map() {
     --argjson cx "${car_x:-0}" --argjson cy "${car_y:-0}" --argjson z "$zoom" '
     {ok: true, width: $w, height: $h, zoom: $z, tileSize: 256,
      carX: $cx, carY: $cy, tiles: $tiles,
-     attribution: "© OpenStreetMap contributors © CARTO"}'
+     attribution: "© OpenStreetMap contributors"}'
 }
 
 # Tiles are immutable for practical purposes, so one that is on disk is never

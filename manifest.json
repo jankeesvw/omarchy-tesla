@@ -44,7 +44,7 @@
         "type": "boolean",
         "label": "Show the range in the bar",
         "defaultValue": true,
-        "description": "Shows the remaining range as the bar item, just the number in whatever unit the car's own screen uses, instead of the Tesla mark. It is the last reading the panel holds, so it asks the car for nothing extra; off gives you the bare mark."
+        "description": "Shows the remaining range as the bar item, just the number in whatever unit the car's own screen uses, instead of the Tesla mark. It is the last reading the panel holds, so it asks the car for nothing extra; off gives you the bare mark. Right-click the widget to toggle it; that choice is remembered."
       },
       {
         "key": "controls",
@@ -65,11 +65,10 @@
         "options": [
           "Auto",
           "Dark",
-          "Light",
-          "OpenStreetMap"
+          "Light"
         ],
         "defaultValue": "Auto",
-        "description": "Auto follows your theme: a light theme gets CARTO's light basemap, a dark one gets its dark basemap. Both are quiet enough to read a marker off, which is why they beat OpenStreetMap's own standard style here. That one is the map everybody recognises, and considerably louder behind a marker."
+        "description": "Tiles come from OpenStreetMap, which needs no account. It ships one style and it is a pale one, so Dark is that same map inverted and turned half a colour wheel, the way OpenStreetMap's own site does its dark mode: water stays blue, parks stay green, and the paper goes black. Auto follows your theme, because a light map inside a dark panel is a torch in the face and a dark one inside a light panel is a hole in it."
       },
       {
         "key": "mapZoom",

@@ -1,4 +1,5 @@
 import QtQuick
+import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
@@ -89,27 +90,30 @@ Panel {
     return (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) > 0.5
   }
 
-  // CARTO's two basemaps are quiet enough to read a marker off and come in a
-  // matched pair, which is the whole reason they are the default over OSM's
-  // own: a dark map dropped into a light theme is a hole in the panel, and a
-  // light one in a dark theme is a torch in the face. Auto follows the theme
-  // so neither happens; the explicit choices are for anyone who wants the map
-  // to disagree on purpose.
+  // OpenStreetMap's own tiles, because they are the ones that stay free
+  // without an account. CARTO's matched light and dark pair used to be the
+  // default and read better behind a marker, but CARTO now enforces an API
+  // key on its basemaps and a keyless request comes back stamped "API KEY
+  // NEEDED" across the map. A default that needs a signup is not a default.
+  //
+  // OSM ships one style and it is a pale one, so a dark theme gets it inverted
+  // rather than swapped: a light map in a dark panel is a torch in the face.
+  // Auto follows the theme; the explicit choices are for anyone who wants the
+  // map to disagree on purpose.
   readonly property string effectiveMapStyle:
     mapStyle === "Auto" ? (lightTheme ? "Light" : "Dark") : mapStyle
 
-  readonly property string tileUrl: {
-    if (effectiveMapStyle === "Light") return "https://basemaps.cartocdn.com/light_all/{z}/{x}/{y}.png"
-    if (effectiveMapStyle === "OpenStreetMap") return "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
-    return "https://basemaps.cartocdn.com/dark_all/{z}/{x}/{y}.png"
-  }
+  readonly property string tileUrl: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"
+
+  readonly property bool darkMap: effectiveMapStyle === "Dark"
 
   // Whether what is about to be drawn is a pale map. Anything painted on top
   // of it, the attribution and the ring around the marker, has to contrast with
   // the tiles rather than with the panel, and those two can disagree: a dark
   // theme with the map forced to Light is exactly where white-on-white went
-  // missing. OpenStreetMap's standard style counts as light too.
+  // missing.
   readonly property bool lightMap: effectiveMapStyle !== "Dark"
+
 
   // Qt decides for itself whether a string is markup, and a Text or tooltip in
   // that mode fetches `<img src="http://...">` for real, from inside the shell
@@ -722,21 +726,63 @@ Panel {
 
   // --------------------------------------------------------------------- bar
 
-  // The bar is the mark and nothing else. An earlier version slid the speed in
-  // beside it while the car was moving, which made the bar shuffle every time
-  // a car pulled away. A lot of movement in the corner of your eye to say
-  // something the panel says better. The colour carries it instead.
-  // vic: the remaining range is the bar item, as "183" (the unit is in the
-  // tooltip and the panel; the bar is for the number you glance at), in the same
-  // cell style the shell's battery widget uses for its percentage. It is the
-  // last reading the panel already holds, so it costs the car nothing extra;
-  // it is blank until a reading exists and ages with it. `showRange` turns it
-  // off for anyone who wants the mark alone, as upstream ships it.
-  readonly property bool showRange: setting("showRange", true)
+  // The remaining range is the bar item; the mark is the fallback when no
+  // range is available. The number uses the same
+  // cell style the shell's battery widget uses for its percentage. The unit
+  // stays in the tooltip and in the panel: the bar is for the number you
+  // glance at, and "183 mi" there is two things to read where one would do.
+  //
+  // An earlier version slid the *speed* in beside the mark while the car was
+  // moving, and that did shuffle the bar every time a car pulled away. Range
+  // is not speed: it moves a digit at a time over a drive, so it sits still
+  // in the corner of your eye in a way the speed never did.
+  //
+  // It costs the car nothing. This is the last reading the panel already
+  // holds, not another question asked of it, so the sleep policy is untouched
+  // and the number ages along with everything else on show.
+  //
+  // Right-click puts it away and brings it back, because whether you want a
+  // number in your bar is a thing you decide by looking at it rather than by
+  // reading a settings list. The choice is kept in a state file, so the widget
+  // comes back the way you left it. `showRange` in the settings is only where
+  // it starts, before you have ever right-clicked.
+  property bool showRange: setting("showRange", true)
+
+  readonly property string stateDir:
+    (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
+    + "/omarchy-tesla"
+
   readonly property string barRange:
     showRange && hasReading && reading.range !== null && reading.range !== undefined
       ? String(Math.round(reading.range))
       : ""
+
+  function toggleRange() {
+    root.showRange = !root.showRange
+    rangeState.setText(root.showRange ? "1\n" : "0\n")
+  }
+
+  // Same shape as the sweeper's state file: make the directory first, then
+  // read, because a FileView pointed at a path whose parent does not exist
+  // fails quietly and you are left wondering why nothing was remembered.
+  Process {
+    id: mkStateDir
+    command: ["mkdir", "-p", root.stateDir]
+    onExited: rangeState.reload()
+  }
+
+  FileView {
+    id: rangeState
+    path: root.stateDir + "/show-range"
+    atomicWrites: true
+    printErrors: false
+    onLoaded: {
+      var v = text().trim()
+      if (v === "0" || v === "1") root.showRange = v === "1"
+    }
+  }
+
+  Component.onCompleted: mkStateDir.running = true
 
   implicitWidth: barRow.implicitWidth
   implicitHeight: button.implicitHeight
@@ -789,6 +835,10 @@ Panel {
         root.openInMaps()
         return
       }
+      if (b === Qt.RightButton) {
+        root.toggleRange()
+        return
+      }
       root.toggle()
     }
   }
@@ -799,6 +849,7 @@ Panel {
   // shell's icon button only knows how to typeset one or the other.
   WidgetButton {
     id: rangeLabel
+    visible: root.barRange !== ""
     anchors.top: parent.top
     anchors.bottom: parent.bottom
     bar: root.bar
@@ -961,6 +1012,7 @@ Panel {
             anchors.fill: parent
             plan: root.mapPlan
             lightMap: root.lightMap
+            darkMap: root.darkMap
             heading: root.hasReading && root.reading.heading !== null ? root.reading.heading : 0
             driving: root.driving
             stale: root.stale
