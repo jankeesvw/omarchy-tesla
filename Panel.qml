@@ -319,7 +319,15 @@ Panel {
   // already on disk without touching it. The only case that reaches Tesla is
   // a car that is already awake and past the throttle, which is the same call
   // opening the panel would make.
-  Component.onCompleted: refresh(false)
+  //
+  // The same moment also kicks off the show-range state file (see `mkStateDir`
+  // further down). QML allows exactly one `Component.onCompleted` per object,
+  // and having two here is what took the whole widget out of the bar after the
+  // upstream merge: "Property value set multiple times", nothing rendered.
+  Component.onCompleted: {
+    mkStateDir.running = true
+    refresh(false)
+  }
 
   // Only while the car is awake on somebody else's account. A parked car gets
   // nothing from here at all, which is the point: fifteen minutes of being
@@ -782,7 +790,8 @@ Panel {
     }
   }
 
-  Component.onCompleted: mkStateDir.running = true
+  // `mkStateDir` is started from the root's single `Component.onCompleted`,
+  // up beside the startup refresh.
 
   implicitWidth: barRow.implicitWidth
   implicitHeight: button.implicitHeight
