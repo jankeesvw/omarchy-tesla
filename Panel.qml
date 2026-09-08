@@ -734,9 +734,11 @@ Panel {
 
   // --------------------------------------------------------------------- bar
 
-  // The remaining range is the bar item; the mark is the fallback when no
-  // range is available. The number uses the same
-  // cell style the shell's battery widget uses for its percentage. The unit
+  // The bar item is the Tesla mark with the remaining range beside it, the
+  // way the battery widget pairs its icon with a percentage. The mark is
+  // always there: a bare number between two other widgets is a number nobody
+  // can tell belongs to the car, which is exactly what happened when it stood
+  // alone. The number uses the same cell style the battery uses. The unit
   // stays in the tooltip and in the panel: the bar is for the number you
   // glance at, and "183 mi" there is two things to read where one would do.
   //
@@ -808,10 +810,9 @@ Panel {
     anchors.top: parent.top
     anchors.bottom: parent.bottom
     bar: root.bar
-    // vic: the number is the widget. The mark only stands in while there is
-    // no reading to show (first start, signed out), so there is always
-    // something in the bar to click.
-    visible: root.barRange === ""
+    // Always shown. The number sits beside it when there is a reading and
+    // `showRange` is on; the mark alone means no reading yet, signed out, or
+    // the number was right-clicked away.
 
     iconComponent: Component {
       TeslaMark {
@@ -852,7 +853,7 @@ Panel {
     }
   }
 
-  // The number. Same colour rules as the mark so the two read as one widget:
+  // The number, beside the mark. Same colour rules so the two read as one widget:
   // green while driving, dimmed while asleep. Its own cell rather than text
   // inside the icon slot because the mark is a Shape, not a glyph, and the
   // shell's icon button only knows how to typeset one or the other.
@@ -877,7 +878,7 @@ Panel {
 
   PopupCard {
     id: popup
-    anchorItem: root.barRange !== "" ? rangeLabel : button
+    anchorItem: button
     bar: root.bar
     owner: root
     open: root.opened
