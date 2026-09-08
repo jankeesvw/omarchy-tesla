@@ -49,6 +49,12 @@ Panel {
   // mark while the car is moving, and nothing else.
   readonly property color liveGreen: "#4caf50"
 
+  // The bar number's other colour: yellow while the car is moving. Fred's
+  // rule, 2026-09-08: parked is green, moving is yellow, so a glance at the
+  // bar says which without reading anything. Material's amber 500, at the same
+  // weight as the green and the red.
+  readonly property color movingYellow: "#ffc107"
+
   // And red while it is charging, for the same reason the live mark is a
   // literal green: "it is filling up" should read the same in every theme
   // rather than turning into whatever the accent is today. Material's red 500
@@ -734,11 +740,11 @@ Panel {
 
   // --------------------------------------------------------------------- bar
 
-  // The bar item is the Tesla mark with the remaining range beside it, the
-  // way the battery widget pairs its icon with a percentage. The mark is
-  // always there: a bare number between two other widgets is a number nobody
-  // can tell belongs to the car, which is exactly what happened when it stood
-  // alone. The number uses the same cell style the battery uses. The unit
+  // The remaining range is the bar item, on its own: no Tesla mark beside it.
+  // The mark only stands in while there is no number to show. Tried with the
+  // mark alongside on 2026-09-08 and Fred wanted it gone; the colour does the
+  // identifying instead. The number uses the same cell style the battery
+  // widget uses for its percentage. The unit
   // stays in the tooltip and in the panel: the bar is for the number you
   // glance at, and "183 mi" there is two things to read where one would do.
   //
@@ -810,9 +816,10 @@ Panel {
     anchors.top: parent.top
     anchors.bottom: parent.bottom
     bar: root.bar
-    // Always shown. The number sits beside it when there is a reading and
-    // `showRange` is on; the mark alone means no reading yet, signed out, or
-    // the number was right-clicked away.
+    // The number is the widget. The mark only stands in while there is no
+    // reading to show (first start, signed out, or the number right-clicked
+    // away), so there is always something in the bar to click.
+    visible: root.barRange === ""
 
     iconComponent: Component {
       TeslaMark {
@@ -821,16 +828,12 @@ Panel {
       }
     }
 
-    // Three states and no more: green while the car is moving, plain while it
-    // is parked and awake, dimmed while it sleeps. The mark is monochrome the
-    // rest of the time on purpose, because a bar full of coloured glyphs is a
-    // bar you stop reading.
-    active: root.driving
-    // Green rather than the shell's urgent red, which is what WidgetButton
-    // reaches for by default. A car being driven is the ordinary use of a car,
-    // not an alarm, and this is the same green as the panel's live dot so the
-    // two agree about what it means.
-    activeColor: root.liveGreen
+    // Same colour rule as the number so the two never disagree: yellow while
+    // the car is moving, green while it is parked, dimmed while it sleeps.
+    // Plain foreground only when there is no reading at all, because then
+    // there is nothing to be a colour about.
+    active: root.hasReading
+    activeColor: root.driving ? root.movingYellow : root.liveGreen
     dimmed: root.asleep || root.errorText !== ""
     tooltipText: {
       if (root.errorText !== "") return root.plain("Dude, where's my car? " + root.errorText)
@@ -853,10 +856,11 @@ Panel {
     }
   }
 
-  // The number, beside the mark. Same colour rules so the two read as one widget:
-  // green while driving, dimmed while asleep. Its own cell rather than text
-  // inside the icon slot because the mark is a Shape, not a glyph, and the
-  // shell's icon button only knows how to typeset one or the other.
+  // The number. Yellow while the car is moving, green while it is parked,
+  // dimmed while it sleeps; the same rule the mark follows when it stands in.
+  // Its own cell rather than text inside the icon slot because the mark is a
+  // Shape, not a glyph, and the shell's icon button only knows how to typeset
+  // one or the other.
   WidgetButton {
     id: rangeLabel
     visible: root.barRange !== ""
@@ -866,8 +870,8 @@ Panel {
     text: root.barRange
     fontSize: Style.font.bodySmall
     horizontalMargin: 6
-    active: root.driving
-    activeColor: root.liveGreen
+    active: root.hasReading
+    activeColor: root.driving ? root.movingYellow : root.liveGreen
     dimmed: root.asleep || root.errorText !== ""
     tooltipText: button.tooltipText
     onPressed: function(b) { button.pressed(b) }
@@ -878,7 +882,7 @@ Panel {
 
   PopupCard {
     id: popup
-    anchorItem: button
+    anchorItem: root.barRange !== "" ? rangeLabel : button
     bar: root.bar
     owner: root
     open: root.opened

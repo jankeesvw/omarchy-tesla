@@ -44,7 +44,7 @@
         "type": "boolean",
         "label": "Show the range in the bar",
         "defaultValue": true,
-        "description": "Shows the remaining range beside the Tesla mark, just the number in whatever unit the car's own screen uses. It is the last reading the panel holds, so it asks the car for nothing extra; off gives you the bare mark. Right-click the widget to toggle it; that choice is remembered."
+        "description": "Shows the remaining range as the bar item, just the number in whatever unit the car's own screen uses, instead of the Tesla mark. Yellow while the car is moving, green while it is parked. It is the last reading the panel holds, so it asks the car for nothing extra; off gives you the bare mark. Right-click the widget to toggle it; that choice is remembered."
       },
       {
         "key": "controls",
