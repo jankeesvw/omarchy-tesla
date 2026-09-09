@@ -241,8 +241,12 @@ Panel {
         root.carState = data.state
 
         // A car that has just woken is a car somebody is using, which is
-        // exactly when where-is-it stops being a rhetorical question.
-        if (was !== "online" && data.state === "online") root.refresh(false)
+        // exactly when where-is-it stops being a rhetorical question. And a
+        // state poll that got through while the bar still has no reading is
+        // proof the route to Tesla works again, so ask now rather than wait
+        // out the retry timer.
+        if ((was !== "online" && data.state === "online") || root.reading === null)
+          root.refresh(false)
       }
     }
   }
@@ -266,11 +270,15 @@ Panel {
         try {
           data = JSON.parse(text)
         } catch (e) {
+          root.scheduleReadingRetry()
           return
         }
         root.errorText = data.error || ""
         root.errorHint = data.hint || ""
-        if (data.ok !== true) return
+        if (data.ok !== true) {
+          root.scheduleReadingRetry()
+          return
+        }
         // Same rule the state poll uses: an unset VIN means Tesla's first car,
         // so the first answer names it rather than being thrown away for not
         // matching a choice nobody has made yet. Without this, a reading that
@@ -280,8 +288,34 @@ Panel {
             && String(data.vin) !== root.selectedVin) return
         if (root.selectedVin === "" && data.vin) root.selectedVin = String(data.vin)
         root.reading = data
+        readingRetry.stop()
+        readingRetry.interval = readingRetry.firstInterval
       }
     }
+  }
+
+  // The first reading can fail for reasons that have nothing to do with the
+  // car: the network is not up yet at login, Tesla is slow, or the script
+  // tripped over its own state poll running beside it. Until 2026-09-08
+  // nothing asked again — the state poll only refreshes when the car wakes,
+  // and a car that was already awake, or stays asleep, never trips that — so
+  // the bar sat on the mark for as long as it took somebody to open the
+  // panel. This asks again, backing off from twenty seconds to five minutes,
+  // and only while there is no reading at all. It still costs the car
+  // nothing: `tesla car` never wakes a car, and serves a sleeping or throttled
+  // one from disk.
+  Timer {
+    id: readingRetry
+    readonly property int firstInterval: 20000
+    interval: firstInterval
+    repeat: false
+    onTriggered: root.refresh(false)
+  }
+
+  function scheduleReadingRetry() {
+    if (root.reading !== null) return
+    readingRetry.restart()
+    readingRetry.interval = Math.min(readingRetry.interval * 2, 300000)
   }
 
   function refresh(force) {

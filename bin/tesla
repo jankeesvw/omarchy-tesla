@@ -192,9 +192,15 @@ serve_fixture() {
 # Written with the same permissions every time, because these files are the
 # whole of the security here: a refresh token is the account until it is
 # revoked.
+# Written to a sibling and renamed into place, so a reader never sees a file
+# half-way through being written. The bar runs `state` and `car` side by side
+# at startup, and a driving car is re-read every fifteen seconds; a plain
+# `cat >` truncates the file first, and a `car` that read the cache in that
+# instant got nothing, reported "no reading yet", and left the bar on the mark
+# until somebody opened the panel.
 write_private() {
-  local path="$1"
-  ( umask 077; cat > "$path" )
+  local path="$1" tmp="$1.tmp.$$"
+  ( umask 077; cat > "$tmp" ) && mv -f "$tmp" "$path"
 }
 
 # A place-cache file is usable only when it was written by place.jq.
@@ -434,7 +440,12 @@ cmd_logout() {
 # every caller writes `$(api ...)`. Command substitution runs the function in a
 # subshell, and a global assigned in a subshell is thrown away with it, so the
 # obvious version of this silently reported success on every error.
-readonly API_ERROR_FILE="$CACHE_DIR/.last-error"
+#
+# One file per process, not one for the whole cache: the bar starts `state`
+# and `car` at the same moment, and with a single shared file one of them
+# truncating or writing it landed in the other's `api_error` check.
+readonly API_ERROR_FILE="$CACHE_DIR/.last-error.$$"
+trap 'rm -f "$API_ERROR_FILE"' EXIT
 
 api_error() { cat "$API_ERROR_FILE" 2>/dev/null; }
 
