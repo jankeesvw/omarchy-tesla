@@ -447,6 +447,18 @@ cmd_logout() {
 readonly API_ERROR_FILE="$CACHE_DIR/.last-error.$$"
 trap 'rm -f "$API_ERROR_FILE"' EXIT
 
+# The shell kills the script outright when it tears a widget down, and a
+# killed process runs no exit trap, so markers get left behind. Any later run
+# sweeps the ones whose owner is gone. The unsuffixed file is the shared
+# marker from before 2026-09-08.
+for stale in "$CACHE_DIR"/.last-error.*; do
+  [ -e "$stale" ] || continue
+  pid=${stale##*.}
+  case "$pid" in ''|*[!0-9]*) continue ;; esac
+  kill -0 "$pid" 2>/dev/null || rm -f "$stale"
+done
+rm -f "$CACHE_DIR/.last-error"
+
 api_error() { cat "$API_ERROR_FILE" 2>/dev/null; }
 
 api() {
@@ -833,6 +845,20 @@ cmd_car() {
   # retrying is how you end up waking it.
   if [ -z "$raw" ]; then
     serve_cache "$cached" "asleep"
+    return 0
+  fi
+
+  # A car that has only just woken can answer vehicle_data before it has
+  # anything to say: the call succeeds and the sections come back hollow,
+  # range included. Written to the cache, that replaces a good reading with
+  # nulls, and the throttle then serves the nulls for as long as it would have
+  # served the truth. That is how the bar went back to the mark on 2026-09-09
+  # with the car sat charging on the drive. A reading with no range is not a
+  # reading; the cache stays as it was.
+  if ! printf '%s' "$raw" \
+      | jq -e '(.charge_state.battery_range // .charge_state.ideal_battery_range) != null' \
+      >/dev/null 2>&1; then
+    serve_cache "$cached" "$state"
     return 0
   fi
 

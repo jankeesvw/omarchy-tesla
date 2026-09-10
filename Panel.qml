@@ -245,7 +245,7 @@ Panel {
         // state poll that got through while the bar still has no reading is
         // proof the route to Tesla works again, so ask now rather than wait
         // out the retry timer.
-        if ((was !== "online" && data.state === "online") || root.reading === null)
+        if ((was !== "online" && data.state === "online") || !root.hasRange)
           root.refresh(false)
       }
     }
@@ -288,6 +288,14 @@ Panel {
             && String(data.vin) !== root.selectedVin) return
         if (root.selectedVin === "" && data.vin) root.selectedVin = String(data.vin)
         root.reading = data
+        if (data.range !== null && data.range !== undefined) root.lastRange = data.range
+        // A reading with no range in it is a reading to ask again after,
+        // not one to settle on. The script no longer caches such answers, so
+        // the retry is served the last good reading from disk.
+        if (!root.hasRange) {
+          root.scheduleReadingRetry()
+          return
+        }
         readingRetry.stop()
         readingRetry.interval = readingRetry.firstInterval
       }
@@ -313,7 +321,7 @@ Panel {
   }
 
   function scheduleReadingRetry() {
-    if (root.reading !== null) return
+    if (root.reading !== null && root.hasRange) return
     readingRetry.restart()
     readingRetry.interval = Math.min(readingRetry.interval * 2, 300000)
   }
@@ -336,6 +344,7 @@ Panel {
     selectedCarName = name || "Tesla"
     carState = ""
     reading = null
+    lastRange = null
     mapPlan = null
     placeStreet = ""
     placeTown = ""
@@ -802,10 +811,20 @@ Panel {
     (Quickshell.env("XDG_STATE_HOME") || (Quickshell.env("HOME") + "/.local/state"))
     + "/omarchy-tesla"
 
+  // The last range this widget has seen, kept apart from the reading so that
+  // a reading which arrives without one (a car answering mid-wake) does not
+  // blank the bar. Cleared on a car switch, because the number is the car's.
+  property var lastRange: null
+  readonly property bool hasRange: lastRange !== null
+
   readonly property string barRange:
-    showRange && hasReading && reading.range !== null && reading.range !== undefined
-      ? String(Math.round(reading.range))
-      : ""
+    showRange && hasRange ? String(Math.round(lastRange)) : ""
+
+  // What actually goes in the bar: the number, with a bolt in front of it
+  // while the car is charging. Fred's ask, 2026-09-09. Nerd Font's
+  // lightning bolt, which the bar's font carries.
+  readonly property string barText:
+    barRange === "" ? "" : (charging ? "\u{F140B} " + barRange : barRange)
 
   function toggleRange() {
     root.showRange = !root.showRange
@@ -901,7 +920,7 @@ Panel {
     anchors.top: parent.top
     anchors.bottom: parent.bottom
     bar: root.bar
-    text: root.barRange
+    text: root.barText
     fontSize: Style.font.bodySmall
     horizontalMargin: 6
     active: root.hasReading

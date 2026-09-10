@@ -122,4 +122,21 @@ run car >/dev/null
   || fail "a reading past the park throttle was not refreshed"
 printf 'ok - a reading past the park throttle is refreshed\n'
 
+# ---- a hollow answer does not replace the reading on disk -------------------
+#
+# A car that has only just woken can answer vehicle_data with empty sections.
+# That must not be written over a good reading, or the throttle serves nulls
+# for the next quarter of an hour and the bar loses its number.
+seed 1200 '[]'
+before=$(jq -r '.range' "$CACHE_FILE")
+: > "$LOG"
+output=$(MOCK_VEHICLE_DATA_BLANK=1 run car)
+[ "$(fetched)" -gt 0 ] \
+  || fail "the hollow-answer case never reached the car"
+[ "$(printf '%s' "$output" | jq -r '.range')" = "$before" ] \
+  || fail "a hollow answer was served instead of the reading on disk"
+[ "$(jq -r '.range' "$CACHE_FILE")" = "$before" ] \
+  || fail "a hollow answer overwrote the cached reading"
+printf 'ok - a hollow answer leaves the cached reading alone\n'
+
 printf 'throttle tests passed\n'

@@ -32,6 +32,11 @@ case "$url" in
     jq -cn '{response: {state: "online"}}'
     ;;
   */api/1/vehicles/1/vehicle_data*)
+    # A car answering mid-wake: the call succeeds and says nothing.
+    if [ "${MOCK_VEHICLE_DATA_BLANK:-0}" = 1 ]; then
+      jq -cn '{response: {vin: "TESTVIN", drive_state: {}, charge_state: {}, vehicle_state: {}}}'
+      exit 0
+    fi
     jq -cn '{response: {
       vin: "TESTVIN",
       gui_settings: {gui_distance_units: "mi/hr", gui_temperature_units: "F",
