@@ -1,7 +1,9 @@
 # Tesla
 
 An [Omarchy](https://omarchy.org) bar widget for your Teslas. The bar shows the
-Tesla mark and nothing else. Click it and a panel comes down with a map of
+remaining range as a number, green while the car is parked and yellow while it
+is moving, with a lightning bolt in front of it while it charges. Click it and
+a panel comes down with a map of
 where the selected car is, which way it is pointing, how full the battery is, how far
 that gets you, and the handful of things you actually end up wondering about a
 parked car.
@@ -208,11 +210,14 @@ only looks.
 
 ## What it shows
 
-**In the bar**, the mark and nothing else. It turns green while the car is
-moving, sits plain while it is parked and awake, and dims while it sleeps.
-Three states, no numbers: a bar full of coloured glyphs is a bar you stop
-reading, so the colour is saved for the one thing worth catching out of the
-corner of your eye.
+**In the bar**, the remaining range, just the number, in whatever unit the
+car's own screen uses. Green while the car is parked, yellow while it is
+moving, dimmed while it sleeps, and with a lightning bolt in front of it
+while it is charging. It is the last reading the widget holds, so it asks the
+car for nothing extra, and it stays put through a reading that comes back
+hollow. Right-click swaps the number for the bare Tesla mark and back; that
+choice is remembered. The mark also stands in on its own until the first
+reading lands.
 
 **In the panel**, top to bottom:
 
