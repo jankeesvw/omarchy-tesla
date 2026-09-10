@@ -7,3 +7,6 @@ ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 bash -n "$ROOT/bin/tesla"
 "$ROOT/test/smoke"
 "$ROOT/test/regional-routing"
+"$ROOT/test/reading"
+"$ROOT/test/commands"
+"$ROOT/test/throttle"

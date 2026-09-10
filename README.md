@@ -1,7 +1,9 @@
 # Tesla
 
 An [Omarchy](https://omarchy.org) bar widget for your Teslas. The bar shows the
-Tesla mark and nothing else. Click it and a panel comes down with a map of
+remaining range as a number, green while the car is parked and yellow while it
+is moving, with a lightning bolt in front of it while it charges. Click it and
+a panel comes down with a map of
 where the selected car is, which way it is pointing, how full the battery is, how far
 that gets you, and the handful of things you actually end up wondering about a
 parked car.
@@ -169,13 +171,53 @@ If you shorten **Leave a parked car alone for** below fifteen minutes you are
 turning this off. The setting goes down to five so you can, not because you
 should.
 
+## Telling it what to do
+
+Everything above is about reading a car without disturbing it. The controls are
+the other half, and they get the opposite rule.
+
+A command is answered by the car itself, not by Tesla's records, so a sleeping
+car cannot hear one. That leaves two honest choices: refuse the command, or
+wake the car to deliver it. This wakes it. A Lock button that quietly did
+nothing because the car was asleep would be worse than no Lock button at all —
+it would be a car you believed was locked.
+
+So: **nothing here runs on a timer, and nothing here happens because the panel
+opened.** A command is sent because somebody pressed a button, and pressing it
+costs a wake. That is the whole of the policy, and it is enforced in
+`bin/tesla` rather than in the QML, the same as the sleep guard is.
+
+What the buttons say is what pressing them will *do*, not what the car is
+currently doing — the details grid two rows up already says that. So the button
+reads **Unlock** when the car is locked, and the word *locked* is four lines
+above it. Nothing has to be reconciled in your head.
+
+Three other things worth knowing:
+
+- **Closing the windows only works near the car.** Tesla checks the position
+  itself and refuses from anywhere else; the same goes for HomeLink. Venting
+  works from anywhere.
+- **A refusal comes back in words.** Tesla says no in tokens like
+  `not_charging`, so the common ones are translated into a sentence under the
+  controls. A button that failed silently would be the worst outcome here.
+- **The reading catches up on its own.** A command corrects the cached reading
+  for the field it changed, then asks the car for a fresh one four seconds
+  later — long enough for the car to have actually done the thing, rather than
+  just to have accepted being asked.
+
+Set **Controls** to `Off` if you would rather the widget stayed something that
+only looks.
+
 ## What it shows
 
-**In the bar**, the mark and nothing else. It turns green while the car is
-moving, sits plain while it is parked and awake, and dims while it sleeps.
-Three states, no numbers: a bar full of coloured glyphs is a bar you stop
-reading, so the colour is saved for the one thing worth catching out of the
-corner of your eye.
+**In the bar**, the remaining range, just the number, in whatever unit the
+car's own screen uses. Green while the car is parked, yellow while it is
+moving, dimmed while it sleeps, and with a lightning bolt in front of it
+while it is charging. It is the last reading the widget holds, so it asks the
+car for nothing extra, and it stays put through a reading that comes back
+hollow. Right-click swaps the number for the bare Tesla mark and back; that
+choice is remembered. The mark also stands in on its own until the first
+reading lands.
 
 **In the panel**, top to bottom:
 
@@ -276,6 +318,7 @@ secrets somewhere else.
 | Setting | Default | What it does |
 | --- | --- | --- |
 | VIN | empty | Which car is initially selected. Empty takes the first; switch cars in the panel. |
+| Controls | Essentials | Which commands the panel offers. `Off` leaves it read-only; `Everything` adds charging, seat heaters, dog and camp mode, valet and HomeLink. |
 | Map | Auto | Follows the theme. Or force CARTO dark, CARTO light, or OpenStreetMap's own tiles. |
 | Zoom | 16 | 16 shows the street and its neighbours. Lower for which town, higher for which parking space. |
 | Panel width | 380 | Sizes the whole panel; everything else is measured off the map. |
@@ -297,6 +340,35 @@ car [--force]             everything the panel shows, subject to the sleep polic
 wake                      wake a sleeping car. The only call that does
 map LAT LON ZOOM W H      map tiles around a point, fetched and cached
 place LAT LON             that point as a street and a town
+```
+
+And the commands. Each of these wakes the car first, on purpose — see
+**Telling it what to do** below:
+
+```
+lock                      lock the doors
+unlock                    unlock the doors
+trunk                     open the boot (and close it, on an S or an X)
+frunk                     open the frunk
+windows vent|close        vent or close all four. Closing needs the car nearby
+sentry on|off             sentry mode
+valet on|off [PIN]        valet mode. The PIN sets one; leaving it off is fine
+drive                     keyless driving, for the next two minutes
+climate on|off            climate control
+temp DEGREES[C|F]         cabin setpoint. Bare number means the car's own unit
+defrost on|off            max defrost
+keeper off|keep|dog|camp  what the car does about the cabin while you are gone
+seat SEAT 0-3             seat heater. front-left, front-right, rear-left,
+                          rear-center, rear-right
+wheel on|off              steering wheel heater
+charge start|stop         charging
+port open|close           the charge port door
+limit PERCENT             charge limit, 50-100
+amps AMPS                 charging current
+horn                      honk
+flash                     flash the lights
+homelink                  the garage door the car is parked in front of
+nav DESTINATION           send somewhere to the car's navigation
 ```
 
 Everything prints one line of JSON, including failures, so nothing that goes

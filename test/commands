@@ -1,0 +1,199 @@
+#!/usr/bin/env bash
+#
+# The command side: what gets sent, what gets woken, and what happens when the
+# car says no.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TESLA="$ROOT/bin/tesla"
+TEST_TMP=$(mktemp -d)
+trap 'rm -rf -- "$TEST_TMP"' EXIT
+
+mkdir -p "$TEST_TMP/bin"
+ln -s "$ROOT/test/mock-curl-commands" "$TEST_TMP/bin/curl"
+
+CONFIG="$TEST_TMP/config"
+CACHE="$TEST_TMP/cache"
+mkdir -p "$CONFIG" "$CACHE"
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+jwt() {
+  local payload
+  payload=$(jq -cn '{iss: "https://auth.tesla.com/oauth2/v3"}' \
+    | openssl base64 -A | tr '+/' '-_' | tr -d '=')
+  printf 'e30.%s.test-signature' "$payload"
+}
+
+TOKEN=$(jwt)
+printf '%s\n' "$TOKEN" > "$CONFIG/refresh-token"
+printf '%s\n' "$TOKEN" > "$CONFIG/access-token"
+# An expiry far enough out that nothing goes back to the token endpoint.
+printf '%s\n' "$(( $(date +%s) + 86400 ))" > "$CONFIG/access-token-expires"
+
+LOG="$TEST_TMP/curl.log"
+BODIES="$TEST_TMP/bodies"
+WAKES="$TEST_TMP/wakes"
+POLLS="$TEST_TMP/polls"
+
+# One command, against a car in whatever state the caller describes.
+run() {
+  : > "$LOG"; : > "$BODIES"; : > "$WAKES"; : > "$POLLS"
+  env PATH="$TEST_TMP/bin:$PATH" \
+    OMARCHY_TESLA_CONFIG_DIR="$CONFIG" \
+    OMARCHY_TESLA_CACHE_DIR="$CACHE" \
+    MOCK_CURL_LOG="$LOG" \
+    MOCK_CURL_BODIES="$BODIES" \
+    MOCK_WAKE_CALLS="$WAKES" \
+    MOCK_STATE_CALLS="$POLLS" \
+    MOCK_STATE_SEQUENCE="${STATES:-online}" \
+    MOCK_RESULT="${RESULT:-true}" \
+    MOCK_REASON="${REASON:-}" \
+    MOCK_ACCESS_TOKEN="$TOKEN" \
+    MOCK_REFRESH_TOKEN="$TOKEN" \
+    OMARCHY_TESLA_WAKE_TIMEOUT="${OMARCHY_TESLA_WAKE_TIMEOUT:-45}" \
+    OMARCHY_TESLA_WAKE_POLL="${OMARCHY_TESLA_WAKE_POLL:-2}" \
+    "$TESLA" "$@"
+}
+
+sent_to() {
+  grep -Fq "/command/$1" "$LOG"
+}
+
+body_is() {
+  local expected="$1" actual
+  actual=$(head -n1 "$BODIES")
+  [ "$(printf '%s' "$actual" | jq -cS .)" = "$(printf '%s' "$expected" | jq -cS .)" ]
+}
+
+# ------------------------------------------------------- the simple commands
+
+output=$(run lock)
+[ "$(printf '%s' "$output" | jq -r '.ok')" = true ] || fail "lock did not succeed"
+sent_to door_lock || fail "lock did not call door_lock"
+[ ! -s "$WAKES" ] || fail "lock woke a car that was already awake"
+
+run unlock >/dev/null
+sent_to door_unlock || fail "unlock did not call door_unlock"
+
+run horn >/dev/null
+sent_to honk_horn || fail "horn did not call honk_horn"
+
+run flash >/dev/null
+sent_to flash_lights || fail "flash did not call flash_lights"
+
+run frunk >/dev/null
+sent_to actuate_trunk || fail "frunk did not call actuate_trunk"
+body_is '{"which_trunk":"front"}' || fail "frunk sent the wrong trunk: $(cat "$BODIES")"
+
+run trunk >/dev/null
+body_is '{"which_trunk":"rear"}' || fail "trunk sent the wrong trunk: $(cat "$BODIES")"
+
+# ------------------------------------------------------------ bodies matter
+
+run sentry on >/dev/null
+sent_to set_sentry_mode || fail "sentry did not call set_sentry_mode"
+body_is '{"on":true}' || fail "sentry on sent $(cat "$BODIES")"
+
+run sentry off >/dev/null
+body_is '{"on":false}' || fail "sentry off sent $(cat "$BODIES")"
+
+run limit 80 >/dev/null
+body_is '{"percent":80}' || fail "limit sent $(cat "$BODIES")"
+
+run seat rear-center 2 >/dev/null
+# Tesla numbers the rear centre seat 4, not 3. Getting this wrong heats the
+# wrong seat, silently, which is exactly the kind of bug a name-to-number map
+# exists to prevent.
+body_is '{"heater":4,"level":2}' || fail "rear-center mapped wrong: $(cat "$BODIES")"
+
+run seat front-left 3 >/dev/null
+body_is '{"heater":0,"level":3}' || fail "front-left mapped wrong: $(cat "$BODIES")"
+
+run keeper dog >/dev/null
+body_is '{"climate_keeper_mode":2}' || fail "dog mode sent $(cat "$BODIES")"
+
+run climate on >/dev/null
+sent_to auto_conditioning_start || fail "climate on did not start conditioning"
+
+run climate off >/dev/null
+sent_to auto_conditioning_stop || fail "climate off did not stop conditioning"
+
+run nav "1 Infinite Loop" >/dev/null
+sent_to share || fail "nav did not call share"
+[ "$(head -n1 "$BODIES" | jq -r '.value["android.intent.extra.TEXT"]')" = "1 Infinite Loop" ] \
+  || fail "nav sent the wrong destination: $(cat "$BODIES")"
+[ "$(head -n1 "$BODIES" | jq -r '.type')" = "share_ext_content_raw" ] \
+  || fail "nav sent the wrong share type"
+
+# --------------------------------------------------------------- conversion
+
+# A car whose screen is in Fahrenheit. The number typed is the number on the
+# screen; Tesla is told Celsius, because that is all it accepts.
+jq -cn '{ok: true, at: 1, vin: "TESTVIN", temp_unit: "°F", lat: 33.7, lon: -84.4}' \
+  > "$CACHE/cars/$(printf 'TESTVIN' | md5sum | awk '{print $1}').json"
+
+run temp 68 >/dev/null
+body_is '{"driver_temp":20,"passenger_temp":20}' \
+  || fail "68F should be 20C, sent $(cat "$BODIES")"
+
+# An explicit unit beats the cache, for the case where you know better.
+run temp 20C >/dev/null
+body_is '{"driver_temp":20,"passenger_temp":20}' \
+  || fail "20C should stay 20C, sent $(cat "$BODIES")"
+
+# ------------------------------------------------------------ position rules
+
+run windows vent >/dev/null
+body_is '{"command":"vent","lat":0,"lon":0}' \
+  || fail "vent should not need a position: $(cat "$BODIES")"
+
+run windows close >/dev/null
+body_is '{"command":"close","lat":33.7,"lon":-84.4}' \
+  || fail "close should carry the last known position: $(cat "$BODIES")"
+
+# ---------------------------------------------------------------- the cache
+
+# A command changes the car, so the reading on disk has to change with it,
+# or the panel spends the next fifteen minutes insisting the doors are open.
+run lock >/dev/null
+[ "$(jq -r '.locked' "$CACHE/cars/$(printf 'TESTVIN' | md5sum | awk '{print $1}').json")" = true ] \
+  || fail "lock did not correct the cached reading"
+
+run sentry on >/dev/null
+[ "$(jq -r '.sentry' "$CACHE/cars/$(printf 'TESTVIN' | md5sum | awk '{print $1}').json")" = true ] \
+  || fail "sentry did not correct the cached reading"
+
+# ---------------------------------------------------------------- the waking
+
+# A sleeping car is woken, once, and then asked again until it answers.
+STATES="asleep asleep online" run lock >/dev/null
+[ -s "$WAKES" ] || fail "a sleeping car was not woken"
+[ "$(wc -l < "$WAKES")" -eq 1 ] || fail "the car was woken more than once"
+sent_to door_lock || fail "the command was not sent after waking"
+
+# A car that never comes round is a failure with a reason, not a hang, and
+# above all not a cheerful "locked" about a car nobody reached.
+output=$(STATES="asleep" OMARCHY_TESLA_WAKE_TIMEOUT=3 OMARCHY_TESLA_WAKE_POLL=1 run lock)
+[ "$(printf '%s' "$output" | jq -r '.ok')" = false ] \
+  || fail "a car that never woke reported success"
+[ "$(printf '%s' "$output" | jq -r '.error')" = "the car did not wake" ] \
+  || fail "a car that never woke gave the wrong error: $output"
+grep -Fq '/command/door_lock' "$LOG" \
+  && fail "the command was sent to a car that never woke"
+
+# ------------------------------------------------------------- the refusals
+
+output=$(RESULT=false REASON=not_charging run charge start)
+[ "$(printf '%s' "$output" | jq -r '.ok')" = false ] \
+  || fail "a refused command reported success"
+[ "$(printf '%s' "$output" | jq -r '.error')" = "not_charging" ] \
+  || fail "the refusal reason was lost"
+[ "$(printf '%s' "$output" | jq -r '.hint')" = "the car is not charging" ] \
+  || fail "the refusal was not explained"
+
+printf 'command tests passed\n'
