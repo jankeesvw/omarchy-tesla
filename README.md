@@ -152,8 +152,8 @@ sleeping car. It runs from the Wake button in the panel and from nowhere else.
 
 So the widget is built around leaving the car alone:
 
-- The bar polls only the free call, every five minutes. That is what dims the
-  icon when the car is asleep, and it costs the car nothing at any interval.
+- The bar polls only the free call, every five minutes. That is how the panel
+  knows whether the car is asleep, and it costs the car nothing at any interval.
 - The car itself is read when **you open the panel**, and otherwise only while
   it is **driving** or **charging**, both cases where something other than
   this widget is already holding it awake, so a reading costs nothing that was
@@ -212,8 +212,10 @@ only looks.
 
 **In the bar**, the remaining range, just the number, in whatever unit the
 car's own screen uses. Green while the car is parked, yellow while it is
-moving, dimmed while it sleeps, and with a lightning bolt in front of it
-while it is charging. It is the last reading the widget holds, so it asks the
+moving, and with a lightning bolt in front of it while it is charging. It
+never dims: a sleeping car is a car doing what parked cars do, and the panel
+is where you find out whether it is awake. It is the last reading the widget
+holds, so it asks the
 car for nothing extra, and it stays put through a reading that comes back
 hollow. Right-click swaps the number for the bare Tesla mark and back; that
 choice is remembered. The mark also stands in on its own until the first
