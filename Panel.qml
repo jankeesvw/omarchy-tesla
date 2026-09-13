@@ -882,15 +882,15 @@ Panel {
     }
 
     // Same colour rule as the number so the two never disagree: yellow while
-    // the car is moving, green while it is parked. Plain foreground only when
-    // there is no reading at all, because then there is nothing to be a
-    // colour about. Never dimmed: it used to fade while the car slept or
-    // after a failed call, and Fred read the fade as something being wrong
-    // (2026-09-13). A sleeping car is the normal state of a car, and the
-    // tooltip already carries the error when there is one.
+    // the car is moving, green while it is parked, dimmed while it sleeps.
+    // Plain foreground only when there is no reading at all, because then
+    // there is nothing to be a colour about. The dim is the one state a
+    // click changes: a click on a sleeping car wakes it (Fred, 2026-09-13,
+    // reversing the no-dim call of the same day). A failed call does not dim;
+    // the tooltip carries the error.
     active: root.hasReading
     activeColor: root.driving ? root.movingYellow : root.liveGreen
-    dimmed: false
+    dimmed: root.asleep
     tooltipText: {
       if (root.errorText !== "") return root.plain("Dude, where's my car? " + root.errorText)
       if (!root.hasReading) return root.plain(root.carName)
@@ -908,13 +908,18 @@ Panel {
         root.toggleRange()
         return
       }
+      // A click on a dimmed, sleeping car wakes it as well as opening the
+      // panel: the dim is an invitation, not a report. This is the same call
+      // the panel's Wake button makes, and it only ever happens because
+      // somebody clicked, so the leave-it-alone rule holds for everything
+      // that runs on a timer.
+      if (root.asleep && !root.opened) root.wake()
       root.toggle()
     }
   }
 
   // The number. Yellow while the car is moving, green while it is parked,
-  // at full strength either way; the same rule the mark follows when it
-  // stands in.
+  // dimmed while it sleeps; the same rule the mark follows when it stands in.
   // Its own cell rather than text inside the icon slot because the mark is a
   // Shape, not a glyph, and the shell's icon button only knows how to typeset
   // one or the other.
@@ -929,7 +934,7 @@ Panel {
     horizontalMargin: 6
     active: root.hasReading
     activeColor: root.driving ? root.movingYellow : root.liveGreen
-    dimmed: false
+    dimmed: root.asleep
     tooltipText: button.tooltipText
     onPressed: function(b) { button.pressed(b) }
   }
