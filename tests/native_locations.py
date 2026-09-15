@@ -10,8 +10,17 @@ assert json.loads((root / 'fixture.json').read_text())['fixture'] is True, 'VM f
 p = root / 'locations.json'
 before = len(json.loads(p.read_text())['locations']) if p.exists() else 0
 subprocess.run(['omarchy-shell','jankeesvw.tesla.test','dashboardTab','3'],check=True)
+# The popup has to map and take keyboard focus before a key can reach it; a
+# key sent in the same instant lands in whatever window had focus before.
+for _ in range(50):
+    status = json.loads(subprocess.check_output(['omarchy-shell','jankeesvw.tesla.test','locationsStatus'],text=True))
+    if status['section'] == 'Locations' and status['focus'] == 'editor': break
+    time.sleep(0.1)
+else: raise AssertionError('the notebook never took keyboard focus: %r' % (status,))
+time.sleep(0.3)
 def keys(*args):
     subprocess.run(['wtype', *args], check=True)
+    time.sleep(0.15)
 keys('-M','alt','-k','n','-m','alt')
 keys('Keyboard fixture')
 keys('-k','Tab')

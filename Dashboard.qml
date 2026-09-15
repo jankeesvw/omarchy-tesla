@@ -29,6 +29,11 @@ FocusScope {
     property string expandedValue: ""
     property int textPage: 0
     readonly property var tabs: ["Overview", "Driving", "Charging", "Locations", "Vehicle", "Climate", "All data", "Map"]
+    // Read-only diagnostics for the IPC test hooks.
+    readonly property int locationsStep: locations.step
+    readonly property bool locationsBusy: locations.busy
+    readonly property string locationsFeedback: locations.feedback
+    readonly property string focusedName: dash.activeFocus ? (locations.activeFocus ? "editor" : "dashboard") : "none"
     readonly property string section: tabs[tabIndex]
     readonly property var analytics: Model.drivingAnalytics(reading)
     readonly property var items: Model.fields(reading, section)
@@ -45,7 +50,16 @@ FocusScope {
         && (!cards.visible || cards.implicitHeight <= body.height + 1)
         && (!locations.visible || locations.fitsViewport)
         && (!expanded.visible || expanded.implicitHeight <= body.height + 1)
-    onTabIndexChanged: { page = 0; expandedLabel = ""; expandedValue = "" }
+    onTabIndexChanged: { page = 0; expandedLabel = ""; expandedValue = ""; focusSection() }
+    // Keys go to whichever item has focus and bubble up from there, never
+    // down. The notebook has shortcuts of its own, so while its tab shows it
+    // must be the focused item; the section keys still reach this scope
+    // because the notebook leaves them unhandled.
+    onActiveFocusChanged: if (activeFocus) focusSection()
+    function focusSection() {
+        if (section === "Locations" && locations.visible) locations.forceActiveFocus()
+        else dash.forceActiveFocus()
+    }
     onCapacityChanged: page = Math.max(0, Math.min(page, pages - 1))
     onItemsChanged: page = Math.max(0, Math.min(page, pages - 1))
     onTextChunkChanged: textPage = Math.max(0, Math.min(textPage, textPages - 1))
@@ -56,6 +70,13 @@ FocusScope {
         else page = Math.max(0, Math.min(pages - 1, page + delta))
     }
     Keys.onPressed: function(event) {
+        // The notebook's Alt shortcuts work wherever focus happens to be in
+        // this scope: KeyboardPanel re-focuses the dashboard itself after the
+        // popup maps, so the editor cannot rely on holding focus.
+        if (section === "Locations" && locations.visible) {
+            locations.handleKey(event)
+            if (event.accepted) return
+        }
         if (event.key === Qt.Key_Right && event.modifiers & Qt.ControlModifier) { tabIndex = (tabIndex + 1) % tabs.length; event.accepted = true }
         else if (event.key === Qt.Key_Left && event.modifiers & Qt.ControlModifier) { tabIndex = (tabIndex + tabs.length - 1) % tabs.length; event.accepted = true }
         else if (event.key === Qt.Key_PageDown) { nextPage(1); event.accepted = true }
@@ -140,7 +161,7 @@ FocusScope {
                 width: (navigation.width - navigation.spacing * (navigation.columns - 1)) / navigation.columns
                 text: modelData
                 chosen: dash.tabIndex === index
-                onClicked: { dash.tabIndex = index; dash.forceActiveFocus() }
+                onClicked: { dash.tabIndex = index; dash.focusSection() }
             }
         }
     }
@@ -237,6 +258,8 @@ FocusScope {
         }
         MapView {
             visible: dash.section === "Map"
+            hasPosition: !!(dash.reading && dash.reading.lat !== null && dash.reading.lat !== undefined
+                            && dash.reading.lon !== null && dash.reading.lon !== undefined)
             anchors.fill: parent
             plan: dash.mapPlan
             darkMap: dash.darkMap

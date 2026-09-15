@@ -37,6 +37,10 @@ Item {
   property bool darkMap: false
   // Dimmed when the reading it came from is old, so a stale map looks stale.
   property bool stale: false
+  // Whether there is a position to draw at all. Without one the "looking"
+  // line would sit on top of the panel's own "not sharing its location",
+  // which is the line that is actually true.
+  property bool hasPosition: true
   property color foreground: Color.foreground
   property color accent: Color.accent
   property string fontFamily: Style.font.family
@@ -136,7 +140,7 @@ Item {
   Text {
     textFormat: Text.PlainText
     anchors.centerIn: parent
-    visible: !root.ready
+    visible: !root.ready && root.hasPosition
     text: "Looking for the map"
     font.family: root.fontFamily
     font.pixelSize: Style.font.caption

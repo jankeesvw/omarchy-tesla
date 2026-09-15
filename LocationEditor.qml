@@ -9,7 +9,10 @@ import "DashboardModel.js" as Model
 // kept in ~/.config/omarchy-tesla/locations.json and nowhere else. Nothing
 // here is geocoded or matched to the car's position; a place is chosen by
 // hand, and the cost line is a scenario, never a bill.
-Item {
+// A FocusScope rather than a plain Item so that its `activeFocus` answers
+// "is the keyboard in the notebook", fields included, and so that giving it
+// focus lands on the field being edited.
+FocusScope {
     id: editor
     property bool loaded: false
     property color foreground: "#e5e9f0"
@@ -25,6 +28,7 @@ Item {
     property string feedback: ""
     property string pending: ""
     property bool saving: false
+    readonly property bool busy: store.running
     readonly property var location: selected >= 0 && selected < locations.length ? locations[selected] : null
     readonly property var tariff: location && location.tariffs.length ? location.tariffs[location.tariffs.length - 1] : null
     readonly property var scenario: Model.costScenario(energy, tariff)
@@ -34,15 +38,20 @@ Item {
     // Keyboard path through the notebook, so a location can be added without
     // reaching for the mouse: Alt+N starts one, Tab moves between the two
     // fields, Alt+Enter goes to the rate, Alt+S saves. Alt rather than Ctrl
-    // because the text fields own Ctrl+A and friends.
-    Keys.onPressed: function(event) {
+    // because the text fields own Ctrl+A and friends. Handled on whichever
+    // item has focus, the editor itself or one of its fields, and before the
+    // field sees the key: a text field swallows Return, so Alt+Enter would
+    // never bubble up from it. Window-level Shortcuts were tried first and
+    // did not fire reliably inside the layer-shell popup.
+    function handleKey(event) {
         if (!(event.modifiers & Qt.AltModifier)) return
-        if (event.key === Qt.Key_N && step === 0) { edit(true); event.accepted = true }
+        if (event.key === Qt.Key_N && step === 0 && !store.running) { edit(true); event.accepted = true }
         else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && step === 1 && nameField.text.trim() !== "") {
             step = 2; priceField.forceActiveFocus(); event.accepted = true
         }
         else if (event.key === Qt.Key_S && step === 2 && !store.running) { saveEntry(); event.accepted = true }
     }
+    Keys.onPressed: function(event) { handleKey(event) }
     function edit(isNew) {
         editingId = !isNew && location ? location.id : ""
         nameField.text = !isNew && location ? location.name : ""
@@ -57,7 +66,9 @@ Item {
     // is built: the widget is re-created many times a day, and each one
     // running python for a tab nobody opened is a process for nothing.
     onVisibleChanged: {
-        if (!visible || loaded) return
+        if (!visible) return
+        forceActiveFocus()
+        if (loaded) return
         loaded = true
         store.command = ["python3", script]
         store.running = true
@@ -71,21 +82,6 @@ Item {
         saving = true
         store.command = ["python3", script, "save"]
         store.running = true
-    }
-    Shortcut {
-        sequence: "Alt+N"
-        enabled: editor.visible && !store.running
-        onActivated: editor.edit(true)
-    }
-    Shortcut {
-        sequence: "Alt+Return"
-        enabled: editor.visible && editor.step === 1 && nameField.text.trim() !== ""
-        onActivated: { editor.step = 2; priceField.forceActiveFocus() }
-    }
-    Shortcut {
-        sequence: "Alt+S"
-        enabled: editor.visible && editor.step === 2 && !store.running
-        onActivated: editor.saveEntry()
     }
     Process {
         id: store
@@ -124,6 +120,7 @@ Item {
     component Input: TextField {
         height: 32
         width: parent.width
+        Keys.onPressed: function(event) { editor.handleKey(event) }
         foreground: editor.foreground
         accent: editor.accent
         font.family: editor.fontFamily

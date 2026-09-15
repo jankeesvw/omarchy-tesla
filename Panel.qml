@@ -954,7 +954,7 @@ Panel {
   property bool dataView: false
   onDataViewChanged: {
     planMap()
-    if (dataView) dashboard.forceActiveFocus()
+    if (dataView) dashboard.focusSection()
   }
 
   KeyboardPanel {
@@ -1120,6 +1120,7 @@ Panel {
           clip: true
 
           MapView {
+            hasPosition: root.hasPosition
             anchors.fill: parent
             plan: root.mapPlan
             lightMap: root.lightMap
@@ -1873,8 +1874,17 @@ Panel {
       dashboard.tabIndex = Math.max(0, Math.min(dashboard.tabs.length - 1, index))
       root.dataView = true
       root.open()
-      dashboard.forceActiveFocus()
+      // After the popup has mapped and KeyboardPanel has handed focus to the
+      // dashboard, put it on the section that wants it.
+      Qt.callLater(function() { dashboard.focusSection() })
       return dashboard.section
+    }
+
+    // Where the notebook is in its flow, for a test that drives it by keys.
+    function locationsStatus(): string {
+      return JSON.stringify({section: dashboard.section, step: dashboard.locationsStep,
+        focus: dashboard.focusedName, storeRunning: dashboard.locationsBusy,
+        feedback: dashboard.locationsFeedback})
     }
 
     function cockpit(): string {
