@@ -1,0 +1,22 @@
+ok  format a10
+ok  format a11
+ok  format a12
+ok  format a15
+ok  format a16
+ok  format a1
+ok  format a3
+ok  format a4
+ok  format a5
+ok  format a6
+ok  format a7
+ok  format a8
+ok  format a9
+ok  format iso_bare
+ok  A13 old cache miss
+ok  A13b usable cache
+ok  A13c ok false
+ok  A13c ok missing
+ok  cmd_place A13b stdout is seeded JSON, no curl
+ok  cmd_place A13 unusable cache not returned
+ok  cmd_place miss writes and prints A1 contract
+ok  cmd_place missing place.jq fails without cache write

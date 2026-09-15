@@ -1,0 +1,46 @@
+{
+  "time": 1789446692.6533134,
+  "ready": true,
+  "checks": {
+    "packages": {
+      "ok": true,
+      "output": "omarchy 4.0.2-1\nhyprland 0.56.2-1\nquickshell 0.3.1-1",
+      "error": ""
+    },
+    "compositor": {
+      "ok": true,
+      "output": "Hyprland 0.56.2 built from branch v0.56.2 at commit efb50993780079460b0cbed1363e2166a2de1d9f clean ([gha] Nix: update inputs).\nDate: Wed Aug 5 14:13:21 2026\nTag: v0.56.2, commits: 7661\n\nLibraries:\nHyprgraphics: built against 0.5.1, system has 0.5.1\nHyprutils: built against 0.14.0, system has 0.14.1\nHyprcursor: built against 0.1.13, system has 0.1.13\nHyprlang: built against 0.6.8, system has 0.6.8\nAquamarine: built against 0.14.0, system has 0.14.0\n\nVersion ABI string: efb50993780079460b0cbed1363e2166a2de1d9f_aq_0.14_hu_0.14_hg_0.5_hc_0.1_hlg_0.6\nno flags were set",
+      "error": ""
+    },
+    "monitors": {
+      "ok": true,
+      "output": "[{\n    \"id\": 0,\n    \"name\": \"Virtual-1\",\n    \"description\": \"Red Hat Inc. QEMU Monitor\",\n    \"make\": \"Red Hat, Inc.\",\n    \"model\": \"QEMU Monitor\",\n    \"serial\": \"\",\n    \"width\": 1920,\n    \"height\": 1080,\n    \"physicalWidth\": 320,\n    \"physicalHeight\": 200,\n    \"refreshRate\": 60.00000,\n    \"x\": 0,\n    \"y\": 0,\n    \"activeWorkspace\": {\n        \"id\": 1,\n        \"name\": \"1\"\n    },\n    \"specialWorkspace\": {\n        \"id\": 0,\n        \"name\": \"\"\n    },\n    \"reserved\": [0, 26, 0, 0],\n    \"scale\": 1,\n    \"transform\": 0,\n    \"focused\": true,\n    \"dpmsStatus\": true,\n    \"vrr\": false,\n    \"solitary\": \"0\",\n    \"solitaryBlockedBy\": [\"WINDOWED\",\"CANDIDATE\"],\n    \"activelyTearing\": false,\n    \"tearingBlockedBy\": [\"NOT_TORN\",\"USER\",\"CANDIDATE\"],\n    \"directScanoutTo\": \"0\",\n    \"directScanoutBlockedBy\": [\"USER\",\"SW\",\"CANDIDATE\"],\n    \"disabled\": false,\n    \"currentFormat\": \"XRGB8888\",\n    \"mirrorOf\": \"none\",\n    \"availableModes\": [\"1280x800@74.99Hz\",\"5120x2160@50.00Hz\",\"4096x2160@50.00Hz\",\"3840x2160@60.00Hz\",\"3840x2160@59.94Hz\",\"3840x2160@50.00Hz\",\"1920x1440@60.00Hz\",\"2560x1080@50.00Hz\",\"1856x1392@59.99Hz\",\"1792x1344@60.00Hz\",\"2048x1152@60.00Hz\",\"1920x1200@59.88Hz\",\"1920x1080@60.00Hz\",\"1920x1080@50.00Hz\",\"1600x1200@60.00Hz\",\"1680x1050@59.95Hz\",\"1400x1050@59.98Hz\",\"1280x1024@60.02Hz\",\"1440x900@59.89Hz\",\"1280x960@60.00Hz\",\"1360x768@60.02Hz\",\"1280x768@59.87Hz\",\"1024x768@60.00Hz\",\"800x600@60.32Hz\",\"640x480@60.00Hz\",\"640x480@59.94Hz\"],\n    \"colorManagementPreset\": \"srgb\",\n    \"sdrBrightness\": 1,\n    \"sdrSaturation\": 1,\n    \"sdrMinLuminance\": 0.2,\n    \"sdrMaxLuminance\": 80,\n    \"hardwareCursorsInUse\": true\n}]",
+      "error": ""
+    },
+    "config_errors": {
+      "ok": true,
+      "output": "",
+      "error": ""
+    },
+    "shell": {
+      "ok": true,
+      "output": "{\"version\":1,\"idle\":{\"screensaver\":0,\"lock\":0,\"dpms\":0,\"suspend\":0},\"bar\":{\"position\":\"top\",\"transparent\":false,\"centerAnchor\":\"omarchy.clock\",\"layout\":{\"left\":[{\"id\":\"omarchy.menu\"},{\"id\":\"omarchy.workspaces\"}],\"center\":[{\"id\":\"omarchy.indicators\"},{\"id\":\"omarchy.clock\",\"format\":\"dddd HH:mm\",\"formatAlt\":\"d MMMM 'W'ww yyyy\",\"verticalFormat\":\"HH\\n\u2014\\nmm\"},{\"id\":\"omarchy.keyboard-layout\"},{\"id\":\"omarchy.weather\"},{\"id\":\"omarchy.system-update\"}],\"right\":[{\"id\":\"omarchy.tray\"},{\"id\":\"jankeesvw.tesla\",\"panelColumns\":2,\"panelWidth\":300},{\"id\":\"testdrive.hello\"},{\"id\":\"omarchy.agents\"},{\"id\":\"omarchy.bluetooth\"},{\"id\":\"omarchy.network\"},{\"id\":\"omarchy.audio\"},{\"id\":\"omarchy.monitor\"},{\"id\":\"omarchy.power\"}]}},\"plugins\":[],\"disabledPlugins\":[\"omarchy.idle\"],\"cloneSourceRestores\":[]}",
+      "error": ""
+    },
+    "guest_agent": {
+      "ok": true,
+      "output": "active",
+      "error": ""
+    },
+    "ssh": {
+      "ok": true,
+      "output": "active",
+      "error": ""
+    },
+    "disk_write": {
+      "ok": true,
+      "output": "",
+      "error": ""
+    }
+  }
+}

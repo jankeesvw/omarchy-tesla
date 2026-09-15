@@ -26,4 +26,6 @@ assert keyboard['section'] == 'Map', 'Ctrl+Right must navigate native sections'
 assert keyboard['view'] == 'data'
 call('cockpit')
 assert json.loads(call('dashboardStatus'))['view'] == 'cockpit', "the cockpit is the panel's other view"
+subprocess.run(['wtype', '-k', 'Escape'], check=True)
+assert json.loads(call('dashboardStatus'))['opened'] is False, 'Escape must close the native cockpit'
 print(json.dumps(results, indent=2))

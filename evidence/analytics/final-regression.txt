@@ -1,0 +1,29 @@
+smoke tests passed
+ok - global routing
+ok - china routing
+ok - untrusted-issuer routing
+regional routing tests passed
+reading tests passed
+command tests passed
+ok - a standing-open door is re-read inside the park throttle
+ok - a shut parked car is still left alone
+ok - a vented window alone does not defeat the park throttle
+ok - a reading past the park throttle is refreshed
+ok - a hollow answer leaves the cached reading alone
+throttle tests passed
+----------------------------------------------------------------------
+Ran 5 tests in 0.057s
+
+OK
+✔ all supplied leaf fields are accessible, grouped and paginated without discarding unknown fields (1.878642ms)
+✔ cost scenario distinguishes free, unknown and invalid inputs; never calls it measured (0.569539ms)
+✔ the panel keeps the cockpit and adds the bounded data view beside it (3.696204ms)
+✔ Owner API cannot infer FSD/manual distance or time from odometer and driving state (0.443785ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 42.114148

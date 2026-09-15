@@ -275,7 +275,7 @@ FocusScope {
             opacity: 0.6
             font.family: dash.fontFamily
             font.pixelSize: 11
-            text: dash.section === "Locations" ? "Private local notebook · no geocoding"
+            text: dash.section === "Locations" ? "Private local notebook · no geocoding · Alt+N new · Alt+Enter next · Alt+S save"
                 : dash.section === "Map" ? "Read-only map · no vehicle commands"
                 : dash.expandedLabel !== "" ? "Value " + (dash.textPage + 1) + " / " + dash.textPages
                 : (dash.page + 1) + " / " + dash.pages + " · " + dash.items.length + " fields · PgUp / PgDn"

@@ -31,6 +31,18 @@ Item {
     readonly property string script: Qt.resolvedUrl("bin/locations.py").toString().replace(/^file:\/\//, "")
     readonly property bool fitsViewport: actionRow.y >= content.implicitHeight && actionRow.y + actionRow.height <= height + 1
 
+    // Keyboard path through the notebook, so a location can be added without
+    // reaching for the mouse: Alt+N starts one, Tab moves between the two
+    // fields, Alt+Enter goes to the rate, Alt+S saves. Alt rather than Ctrl
+    // because the text fields own Ctrl+A and friends.
+    Keys.onPressed: function(event) {
+        if (!(event.modifiers & Qt.AltModifier)) return
+        if (event.key === Qt.Key_N && step === 0) { edit(true); event.accepted = true }
+        else if ((event.key === Qt.Key_Return || event.key === Qt.Key_Enter) && step === 1 && nameField.text.trim() !== "") {
+            step = 2; priceField.forceActiveFocus(); event.accepted = true
+        }
+        else if (event.key === Qt.Key_S && step === 2 && !store.running) { saveEntry(); event.accepted = true }
+    }
     function edit(isNew) {
         editingId = !isNew && location ? location.id : ""
         nameField.text = !isNew && location ? location.name : ""
