@@ -33,7 +33,7 @@ FocusScope {
     readonly property var tariff: location && location.tariffs.length ? location.tariffs[location.tariffs.length - 1] : null
     readonly property var scenario: Model.costScenario(energy, tariff)
     readonly property string script: Qt.resolvedUrl("bin/locations.py").toString().replace(/^file:\/\//, "")
-    readonly property bool fitsViewport: actionRow.y >= content.implicitHeight && actionRow.y + actionRow.height <= height + 1
+    implicitHeight: layout.implicitHeight
 
     // Keyboard path through the notebook, so a location can be added without
     // reaching for the mouse: Alt+N starts one, Tab moves between the two
@@ -62,12 +62,10 @@ FocusScope {
         step = 1
         nameField.forceActiveFocus()
     }
-    // The store is read the first time the tab is shown, not when the panel
+    // The store is read the first time the panel opens, not when the widget
     // is built: the widget is re-created many times a day, and each one
-    // running python for a tab nobody opened is a process for nothing.
-    onVisibleChanged: {
-        if (!visible) return
-        forceActiveFocus()
+    // running python for a panel nobody opened is a process for nothing.
+    function load() {
         if (loaded) return
         loaded = true
         store.command = ["python3", script]
@@ -136,6 +134,11 @@ FocusScope {
         width: parent.width
     }
     Column {
+        id: layout
+        width: parent.width
+        spacing: 8
+
+    Column {
         id: content
         width: parent.width
         spacing: 7
@@ -158,7 +161,7 @@ FocusScope {
             }
             LabelText {
                 text: editor.tariff ? "Current tariff: " + (editor.tariff.price === null ? "Unknown" : editor.tariff.price === 0 ? "Free · 0 " + editor.tariff.currency + "/kWh" : editor.tariff.price + " " + editor.tariff.currency + "/kWh") : "Name your charging places and define their rates."
-                font.pixelSize: 17
+                font.pixelSize: 14
                 color: editor.accent
             }
             LabelText {
@@ -201,7 +204,6 @@ FocusScope {
     }
     Row {
         id: actionRow
-        anchors.bottom: parent.bottom
         width: parent.width
         height: 32
         spacing: 6
@@ -235,5 +237,6 @@ FocusScope {
                 else editor.step = 0
             }
         }
+    }
     }
 }

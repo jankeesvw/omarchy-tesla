@@ -1,31 +1,25 @@
 #!/usr/bin/env python3
-"""Native integration assertions. Run only in the dedicated fixture VM."""
+"""One screen, no scrolling: the whole panel fits the display it opens on.
+Run inside the dedicated Test Drive guest, at each display size that matters."""
 import json
 import subprocess
+import time
 
 def call(*args):
     return subprocess.check_output(['omarchy-shell', 'jankeesvw.tesla.test', *args], text=True).strip()
 
-initial = json.loads(call('dashboardStatus'))
-assert initial['page'] >= 0, 'Initial page must never be negative during QML binding initialization'
-results = []
-for tab in range(8):
-    call('dashboardTab', str(tab))
-    status = json.loads(call('dashboardStatus'))
-    assert status['opened'] and status['fits'], status
-    assert status.get('contentFits') is True, 'Must measure the actual visible content, not just viewport bounds'
-    assert status['distanceShare'] is None and status['timeShare'] is None
-    results.append(status)
-call('dashboardTab', '6')
-subprocess.run(['wtype', '-k', 'Next'], check=True)
-keyboard = json.loads(call('dashboardStatus'))
-assert keyboard['page'] == 1, 'PageDown must reach the native popup'
-subprocess.run(['wtype', '-M', 'ctrl', '-k', 'Right', '-m', 'ctrl'], check=True)
-keyboard = json.loads(call('dashboardStatus'))
-assert keyboard['section'] == 'Map', 'Ctrl+Right must navigate native sections'
-assert keyboard['view'] == 'data'
-call('cockpit')
-assert json.loads(call('dashboardStatus'))['view'] == 'cockpit', "the cockpit is the panel's other view"
+subprocess.run(['omarchy-shell', 'jankeesvw.tesla', 'open'], check=True)
+for _ in range(50):
+    status = json.loads(call('status'))
+    if status['opened']: break
+    time.sleep(0.1)
+else: raise AssertionError('the panel never opened: %r' % (status,))
+time.sleep(0.6)
+status = json.loads(call('status'))
+assert status['fields'] >= 40, 'every field the car reports must be on the panel: %r' % (status,)
+assert status['fits'], 'the panel must fit the screen top to bottom, never scroll: %r' % (status,)
+assert status['fitsWidth'], 'the four columns must fit the screen side by side: %r' % (status,)
 subprocess.run(['wtype', '-k', 'Escape'], check=True)
-assert json.loads(call('dashboardStatus'))['opened'] is False, 'Escape must close the native cockpit'
-print(json.dumps(results, indent=2))
+time.sleep(0.4)
+assert json.loads(call('status'))['opened'] is False, 'Escape must close the panel'
+print(json.dumps(status, indent=2))

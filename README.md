@@ -221,35 +221,29 @@ hollow. Right-click swaps the number for the bare Tesla mark and back; that
 choice is remembered. The mark also stands in on its own until the first
 reading lands.
 
-**In the panel**, the cockpit first, and a data view behind its **Data**
-button.
+**In the panel**, everything, on one screen. Four columns side by side: the
+map and the readings, the switches, and then every field the car reports as
+one line each, grouped into Charging, Driving, Position, Climate and Vehicle,
+with the tariff notebook under the first pair. The panel is as tall as its
+content and no taller than the screen; nothing in it scrolls, pages or hides
+behind a tab. Escape closes it.
 
-**The data view** is every field the car reports, in eight sections: Overview,
-Driving, Charging, Locations, Vehicle, Climate, All data and Map. Nothing in it
-scrolls: a section that has more fields than fit becomes pages, and Prev/Next
-(or PgUp/PgDn) turn them. Ctrl+Left/Right switches sections, a click on any
-card shows its complete value, Escape closes the panel, and **Cockpit** goes
-back. It reads only what the panel already holds; it never asks the car for
-anything and cannot wake it.
-
-- *Driving* is honest about what the Owner API does not say: it has no
-  same-period FSD and total-distance counters and no engagement durations, so
-  FSD share of miles and of time are shown as unavailable rather than guessed.
-  Time divided by odometer is not a percentage, and non-FSD is not "manual":
-  it may include basic Autopilot.
-- *Locations* is a private notebook of charging places and what a kWh costs
-  at each, kept in `~/.config/omarchy-tesla/locations.json` with mode 0600
-  and nowhere else. Name a place, give it an address if you like (never
+- *Driving* says plainly what the Owner API does not: it has no same-period
+  FSD and total-distance counters and no engagement durations, so an FSD
+  share of miles or of time is shown as unavailable rather than guessed. Time
+  divided by odometer is not a percentage, and non-FSD is not "manual": it
+  may include basic Autopilot.
+- *Charging places* is a private notebook of where you charge and what a kWh
+  costs there, kept in `~/.config/omarchy-tesla/locations.json` with mode
+  0600 and nowhere else. Name a place, give it an address if you like (never
   geocoded, never sent anywhere), and a rate: `0` means free, blank means
   unknown, and unknown is not free. Rates keep their history with the date
   each took effect. The cost line is a scenario, last reported battery-side
-  energy times the rate you chose, and says so; it is not a bill, and choosing
-  a place is not a claim the car charged there. Alt+N, Alt+Enter and Alt+S
-  drive it from the keyboard.
-- *All data* is every normalized field the plugin holds, unknown ones
-  included, so nothing the car reports is hidden by a layout decision.
+  energy times the rate you chose, and says so; it is not a bill, and
+  choosing a place is not a claim the car charged there. Alt+N, Alt+Enter
+  and Alt+S drive it from the keyboard.
 
-**The cockpit**, top to bottom:
+**The cockpit columns**, top to bottom:
 
 - The car's name. Accounts with more than one car also get a row of car buttons;
   each button switches the panel to that VIN without changing the saved default.

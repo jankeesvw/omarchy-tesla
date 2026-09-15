@@ -3,6 +3,7 @@ import Quickshell
 import Quickshell.Io
 import qs.Commons
 import qs.Ui
+import "DashboardModel.js" as Model
 
 // Dude, Where's My Car: a Tesla in the bar, and a map behind it.
 //
@@ -77,7 +78,20 @@ Panel {
   // panel is taller than a 1080p screen, so the controls sit below the fold and
   // the answer to "is it locked" costs a scroll. One restores the original
   // stacked panel for narrow screens and vertical bars.
-  readonly property int panelColumns: Math.max(1, Math.min(2, setting("panelColumns", 2)))
+  // The two data columns beside the cockpit, in the same units as panelWidth.
+  // Narrower than the cockpit's columns: one line per field needs less room
+  // than a map, and four columns have to fit a laptop screen side by side.
+  // On a screen too narrow for the full 300 they give way first, down to
+  // 200, so the panel still fits rather than losing its right edge.
+  readonly property int dataWidth: Math.max(200, Math.min(300,
+    Math.floor(((popup.availableCardWidth - root.horizontalInset) / Style.space(1)
+                - root.panelWidth * 2 - 16 * 3) / 2)))
+
+  // What the card keeps for itself either side of the content: its padding
+  // and its border. `contentWidth` is the card's width, so the request has to
+  // include this or the last column overhangs the content area by exactly it.
+  readonly property real horizontalInset:
+    popup.padding * 2 + Border.left(popup.borderSpec) + Border.right(popup.borderSpec)
   readonly property int mapZoom: setting("mapZoom", 16)
   readonly property string mapStyle: setting("mapStyle", "Auto")
   readonly property int statePollMinutes: setting("statePollMinutes", 5)
@@ -411,10 +425,8 @@ Panel {
     interval: 250
     onTriggered: {
       if (!root.hasPosition || mapProc.running) return
-      // Whichever view is showing gets the tiles cut to its own map: the
-      // cockpit's three-to-two panel, or the data view's full-body Map tab.
-      var w = Math.round(root.dataView ? dashboard.mapViewportWidth : mapArea.width)
-      var h = Math.round(root.dataView ? dashboard.mapViewportHeight : mapArea.height)
+      var w = Math.round(mapArea.width)
+      var h = Math.round(mapArea.height)
       if (w <= 0 || h <= 0) return
       mapProc.command = root.cmd(["map", String(root.lat), String(root.lon),
                                   String(root.mapZoom), String(w), String(h)])
@@ -433,6 +445,7 @@ Panel {
   onOpenedChanged: {
     planMap()
     if (!opened) return
+    locations.load()
     // Opening the panel is a person asking, so it is worth one reading,
     // still subject to the script's throttle, so opening it twice in a
     // minute costs one call, not two.
@@ -944,19 +957,10 @@ Panel {
 
   // ------------------------------------------------------------------- panel
 
-  // Two views in one popup. The cockpit is the panel as it has always been:
-  // map, readings, switches, Wake. The data view is the tabbed browser of
-  // every field the car reports, with the tariff notebook, reached from the
-  // Data button in the cockpit's header and left through its Cockpit button.
-  // Hermes delivered the data view on 2026-09-15 as a replacement for the
-  // cockpit; the switches and the click-to-wake were not part of that brief,
-  // so it lives beside the cockpit rather than instead of it.
-  property bool dataView: false
-  onDataViewChanged: {
-    planMap()
-    if (dataView) dashboard.focusSection()
-  }
-
+  // One screen. Fred, 2026-09-15: "all that info on the ONE screen without
+  // having to scroll". The cockpit's two columns, then two more with every
+  // field the car reports and the tariff notebook. The popup is sized to its
+  // content and capped at the screen; nothing in it scrolls or pages.
   KeyboardPanel {
     id: popup
     anchorItem: root.barRange !== "" ? rangeLabel : button
@@ -966,38 +970,36 @@ Panel {
     // Click, not hover: opening this fetches map tiles and possibly asks the
     // car for a reading, so it should happen because you meant it rather than
     // because the cursor crossed the bar. (KeyboardPanel is click-only.)
-    focusTarget: root.dataView ? dashboard : content
+    focusTarget: content
     contentWidth: popup.fittedContentWidth(
-      Style.space(root.panelWidth) * root.panelColumns
-      + Style.space(16) * (root.panelColumns - 1))
-    // The cockpit is as tall as its content. The data view is a fixed
-    // viewport that pages its fields to fit, so it never needs scrolling.
-    contentHeight: root.dataView
-      ? popup.fittedContentHeight(Style.space(600))
-      : popup.fittedContentHeight(content.implicitHeight)
+      Style.space(root.panelWidth) * 2 + Style.space(root.dataWidth) * 2
+      + Style.space(16) * 3 + root.horizontalInset)
+    contentHeight: popup.fittedContentHeight(content.implicitHeight)
 
     Grid {
       id: content
       anchors.fill: parent
-      visible: !root.dataView
       Keys.onEscapePressed: root.close()
-      // One column is the original panel, stacked the way it has always been.
-      // Two puts the readings beside the controls, which is the whole point:
-      // at one column this panel is taller than a 1080p screen, so the half
-      // you came for is the half below the fold.
-      columns: root.panelColumns
+      // The notebook's Alt shortcuts work from anywhere in the panel; a text
+      // field forwards them itself, everything else bubbles up to here.
+      Keys.onPressed: function(event) { locations.handleKey(event) }
+      // Four columns: map and readings, switches, then every field the car
+      // reports in two more. Side by side because stacked this would be
+      // three screens tall, and the point is one.
+      columns: 4
       columnSpacing: Style.space(16)
       rowSpacing: Style.space(12)
 
-      readonly property real columnWidth:
-        Math.floor((width - columnSpacing * (columns - 1)) / columns)
+      // The data columns share whatever width the card actually gave us
+      // after the cockpit's two, so a card capped by the screen narrows them
+      // rather than clipping the last one.
+      readonly property real dataColumnWidth:
+        Math.max(Style.space(120),
+          Math.floor((width - columnSpacing * 3 - Style.space(root.panelWidth) * 2) / 2))
 
       Column {
         id: contentLeft
-        // Shared out of the width the card actually gave us, rather than the
-        // width we asked for: the card keeps padding of its own, so a column
-        // sized to the request overhangs the edge and gets clipped.
-        width: content.columnWidth
+        width: Style.space(root.panelWidth)
         // Generous on purpose. This panel is read in glances rather than
         // scanned, and every section in it answers a different question, so
         // they want visible daylight between them rather than a tidy list.
@@ -1029,19 +1031,6 @@ Panel {
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(4)
 
-            // The way into the data view: every field the car reports, in
-            // tabs, with the tariff notebook. The cockpit stays the front
-            // page because the map and the switches are what a glance is for.
-            Button {
-              anchors.verticalCenter: parent.verticalCenter
-              text: "Data \u203A"
-              bordered: true
-              fontSize: Style.font.caption
-              verticalPadding: Style.space(2)
-              foreground: root.foreground
-              fontFamily: root.fontFamily
-              onClicked: root.dataView = true
-            }
 
             // No model name here. The panel is about one specific car and
             // naming it on every glance is noise; the bar's tooltip says which
@@ -1299,15 +1288,8 @@ Panel {
 
       Column {
         id: contentRight
-        width: content.columnWidth
+        width: Style.space(root.panelWidth)
         spacing: Style.space(12)
-
-        PanelSeparator {
-          width: parent.width
-          // Stacked, this rule divides the readings above from the details
-          // below. Side by side there is nothing above it to divide.
-          visible: root.panelColumns === 1
-        }
 
         // ------------------------------------------------------------ details
 
@@ -1729,27 +1711,136 @@ Panel {
           opacity: 0.6
         }
       }
+
+      // ------------------------------------------------------ everything
+    //
+    // Every field the car reports, one line each, label left and value
+    // right, grouped the way the fields fall. Fred, 2026-09-15: all of it on
+    // the one screen. The two columns are balanced so the taller of them is
+    // about the cockpit's height, and the notebook sits under the shorter.
+
+    Column {
+      id: dataColumnA
+      width: content.dataColumnWidth
+      spacing: Style.space(10)
+
+      DataSection { title: "CHARGING"; rows: Model.fields(root.reading, "Charging") }
+
+      DataSection { title: "DRIVING"; rows: Model.fields(root.reading, "Driving") }
+
+      // What the car will not say. The Owner API has no FSD or Autopilot
+      // counters and no engagement durations, so there is no share of miles
+      // or of time to show, and dividing hours by an odometer is not one.
+      Text {
+        width: parent.width
+        textFormat: Text.PlainText
+        text: "FSD share of miles and time: unavailable. The Owner API carries no Autopilot counters or engagement time, and the odometer is not a clock."
+        wrapMode: Text.WordWrap
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        color: root.foreground
+        opacity: 0.45
+      }
+
+      PanelSeparator { width: parent.width }
+
+      // The tariff notebook: charging places and what a kWh costs at each,
+      // private to this machine. Loaded when the panel opens, not when the
+      // widget is built.
+      Text {
+        textFormat: Text.PlainText
+        text: "CHARGING PLACES"
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.caption
+        font.letterSpacing: 1
+        color: root.foreground
+        opacity: 0.5
+      }
+
+      LocationEditor {
+        id: locations
+        width: parent.width
+        foreground: root.foreground
+        accent: root.liveAccent
+        background: Color.background
+        fontFamily: root.fontFamily
+        energy: root.hasReading ? root.reading.energy_added : null
+      }
     }
 
-    Dashboard {
-      id: dashboard
-      anchors.fill: parent
-      visible: root.dataView
-      reading: root.reading
-      status: root.stateWord + " \u00b7 " + root.summary
-      foreground: root.foreground
-      accent: root.liveAccent
-      background: Color.background
-      fontFamily: root.fontFamily
-      mapPlan: root.mapPlan
-      darkMap: root.darkMap
-      cars: root.availableCars
-      selectedVin: root.selectedVin
-      onSelectCar: function(vin, name) { root.selectCar(vin, name) }
-      onBack: root.dataView = false
-      onCloseRequested: root.close()
-      onMapViewportWidthChanged: root.planMap()
-      onMapViewportHeightChanged: root.planMap()
+    Column {
+      id: dataColumnB
+      width: content.dataColumnWidth
+      spacing: Style.space(10)
+
+      DataSection { title: "CLIMATE"; rows: Model.fields(root.reading, "Climate") }
+
+      DataSection { title: "VEHICLE"; rows: Model.fields(root.reading, "Vehicle") }
+
+      DataSection { title: "POSITION"; rows: Model.fields(root.reading, "Position") }
+    }
+    }
+  }
+
+  // Every field the panel holds, for the IPC status the tests read.
+  readonly property int fieldCount: Model.fields(root.reading, "All data").length
+
+  // A section of the data columns: a small caps title and one line per
+  // field. Label and value share the line, the value right-aligned and both
+  // elided rather than wrapped, so a section is exactly as tall as its
+  // field count and the columns can be balanced by counting.
+  component DataSection: Column {
+    property string title: ""
+    property var rows: []
+    width: parent.width
+    spacing: 0
+
+    Text {
+      textFormat: Text.PlainText
+      text: title
+      font.family: root.fontFamily
+      font.pixelSize: Style.font.caption
+      font.letterSpacing: 1
+      color: root.foreground
+      opacity: 0.5
+      bottomPadding: Style.space(3)
+    }
+
+    Repeater {
+      model: rows
+      Item {
+        required property var modelData
+        width: parent.width
+        height: valueText.implicitHeight + Style.space(3)
+
+        Text {
+          anchors.left: parent.left
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.floor(parent.width * 0.48)
+          textFormat: Text.PlainText
+          text: modelData.label
+          elide: Text.ElideRight
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          color: root.foreground
+          opacity: 0.55
+        }
+
+        Text {
+          id: valueText
+          anchors.right: parent.right
+          anchors.verticalCenter: parent.verticalCenter
+          width: Math.floor(parent.width * 0.5)
+          horizontalAlignment: Text.AlignRight
+          textFormat: Text.PlainText
+          text: modelData.value
+          elide: Text.ElideRight
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          color: root.foreground
+          opacity: modelData.value === "unavailable" ? 0.35 : 0.9
+        }
+      }
     }
   }
 
@@ -1870,37 +1961,28 @@ Panel {
   IpcHandler {
     target: "jankeesvw.tesla.test"
 
-    function dashboardTab(index: int): string {
-      dashboard.tabIndex = Math.max(0, Math.min(dashboard.tabs.length - 1, index))
-      root.dataView = true
-      root.open()
-      // After the popup has mapped and KeyboardPanel has handed focus to the
-      // dashboard, put it on the section that wants it.
-      Qt.callLater(function() { dashboard.focusSection() })
-      return dashboard.section
+    // Whether the whole panel fits the screen it is on, which is the one
+    // promise this layout makes: everything, no scrolling. `fits` compares
+    // what the content wants with what the popup could give it.
+    function status(): string {
+      return JSON.stringify({opened: root.opened, fields: root.fieldCount,
+        contentHeight: Math.round(content.implicitHeight + popup.verticalContentInset),
+        cardHeight: Math.round(popup.availableCardHeight),
+        fits: content.implicitHeight + popup.verticalContentInset <= popup.availableCardHeight + 1,
+        contentWidth: Math.round(content.implicitWidth), cardWidth: popup.contentWidth,
+        gridWidth: Math.round(content.width), availableCardWidth: Math.round(popup.availableCardWidth),
+        windowWidth: Math.round(popup.width), padding: popup.padding, margin: popup.margin,
+        screenWidth: Math.round(popup.screenW),
+        fitsWidth: content.implicitWidth <= content.width + 1,
+        columns: [Math.round(contentLeft.implicitHeight), Math.round(contentRight.implicitHeight),
+                  Math.round(dataColumnA.implicitHeight), Math.round(dataColumnB.implicitHeight)]})
     }
 
     // Where the notebook is in its flow, for a test that drives it by keys.
     function locationsStatus(): string {
-      return JSON.stringify({section: dashboard.section, step: dashboard.locationsStep,
-        focus: dashboard.focusedName, storeRunning: dashboard.locationsBusy,
-        feedback: dashboard.locationsFeedback})
-    }
-
-    function cockpit(): string {
-      root.dataView = false
-      root.open()
-      return "cockpit"
-    }
-
-    function dashboardStatus(): string {
-      return JSON.stringify({view: root.dataView ? "data" : "cockpit",
-        width: dashboard.width, height: dashboard.height,
-        section: dashboard.section, fields: dashboard.items.length,
-        page: dashboard.page, pages: dashboard.pages, capacity: dashboard.capacity,
-        fits: dashboard.fitsViewport, contentFits: dashboard.contentFits, opened: root.opened,
-        distanceShare: dashboard.analytics.distanceShare,
-        timeShare: dashboard.analytics.timeShare})
+      return JSON.stringify({step: locations.step,
+        focus: content.activeFocus || locations.activeFocus ? "panel" : "none",
+        storeRunning: locations.busy, feedback: locations.feedback})
     }
 
     function drive(speed: int, heading: int): string {

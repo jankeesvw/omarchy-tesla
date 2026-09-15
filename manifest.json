@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "jankeesvw.tesla",
   "name": "Tesla",
-  "version": "1.4.0",
+  "version": "1.5.0",
   "author": "Jankees van Woezik",
-  "description": "Your Tesla in the bar: where it is, how full it is, how far that gets you, what you can tell it to do, and every field it reports in a data view with a private tariff notebook",
+  "description": "Your Tesla in the bar: where it is, how full it is, how far that gets you, what you can tell it to do, and every field it reports, all on one screen, with a private tariff notebook",
   "homepage": "https://github.com/jankeesvw/omarchy-tesla",
   "license": "MIT",
   "kinds": [
@@ -15,7 +15,7 @@
   },
   "barWidget": {
     "displayName": "Tesla",
-    "description": "Your Tesla in the bar: where it is, how full it is, how far that gets you, what you can tell it to do, and every field it reports in a data view with a private tariff notebook",
+    "description": "Your Tesla in the bar: where it is, how full it is, how far that gets you, what you can tell it to do, and every field it reports, all on one screen, with a private tariff notebook",
     "category": "Home",
     "allowMultiple": false,
     "defaultSection": "right",
