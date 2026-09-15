@@ -1,0 +1,233 @@
+✔ all supplied leaf fields are accessible, grouped and paginated without discarding unknown fields (1.910503ms)
+✔ cost scenario distinguishes free, unknown and invalid inputs; never calls it measured (0.613278ms)
+✖ native panel uses bounded dashboard and opening it never wakes the car (1.435815ms)
+✔ Owner API cannot infer FSD/manual distance or time from odometer and driving state (0.484204ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 3
+ℹ fail 1
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 47.690651
+
+✖ failing tests:
+
+test at tests/dashboard.test.cjs:25:1
+✖ native panel uses bounded dashboard and opening it never wakes the car (1.435815ms)
+  AssertionError [ERR_ASSERTION]: The input did not match the regular expression /Math\.max\(380, setting\("panelWidth", 380\)\)/. Input:
+  
+  'import QtQuick\n' +
+    'import Quickshell\n' +
+    'import Quickshell.Io\n' +
+    'import qs.Commons\n' +
+    'import qs.Ui\n' +
+    '\n' +
+    "// Dude, Where's My Car: a Tesla in the bar, and a map behind it.\n" +
+    '//\n' +
+    '// The bar shows the Tesla mark and, while the car is moving, how fast. The\n' +
+    '// panel shows where it is, which way it is pointing, how full it is and how\n' +
+    '// far that gets you.\n' +
+    '//\n' +
+    "// The interesting constraint is not the drawing, it is the asking. Tesla's\n" +
+    "// API has calls that are answered by Tesla's servers and calls that are\n" +
+    "// answered by the car, and the second kind resets the car's sleep timer. A\n" +
+    '// widget that refreshed itself every few seconds would quietly stop the car\n' +
+    '// ever sleeping and flatten the battery over a week of standing still.\n' +
+    '//\n' +
+    '// So the bar polls only the free call, online, asleep or offline, and the\n' +
+    '// car itself is asked at three moments: when you open the panel, while it is\n' +
+    '// driving (awake regardless of us) and while it is charging (likewise). A\n' +
+    '// parked car is left alone. `bin/tesla` enforces that a second\n' +
+    '// time from the other side, so a mistake in this file cannot flatten anything.\n' +
+    '//\n' +
+    '// Glyphs are \\u escapes rather than literal characters, so the source survives\n' +
+    '// editors and patches that mangle private-use codepoints.\n' +
+    'Panel {\n' +
+    '  id: root\n' +
+    '\n' +
+    '  moduleName: "jankeesvw.tesla"\n' +
+    '  ipcTarget: "jankeesvw.tesla"\n' +
+    '\n' +
+    '  // The script that does the talking sits next to this file, so the plugin\n' +
+    '  // runs from wherever it was installed without putting anything on $PATH.\n' +
+    '  readonly property string script:\n' +
+    '    Qt.resolvedUrl("bin/tesla").toString().replace(/^file:\\/\\//, "")\n' +
+    '\n' +
+    '  readonly property color foreground: bar ? bar.foreground : Color.foreground\n' +
+    '  // The bar exposes a foreground and a font, not an accent; the accent is a\n' +
+    '  // theme-level colour, so it is read straight off Color.\n' +
+    '  readonly property color accent: Color.accent\n' +
+    '  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family\n' +
+    '\n' +
+    "  // Omarchy's palette has a foreground, an accent, an urgent and a muted, and\n" +
+    '  // no green. This is the one place a literal colour is right: a live\n' +
+    '  // indicator is green everywhere, in every theme, and one that drifted to\n' +
+    '  // whatever the accent happened to be would stop reading as "it is up" and\n' +
+    "  // start reading as decoration. It marks the panel's status dot and the bar\n" +
+    '  // mark while the car is moving, and nothing else.\n' +
+    '  readonly property color liveGreen: "#4caf50"\n' +
+    '\n' +
+    "  // The bar number's other colour: yellow while the car is moving. Fred's\n" +
+    '  // rule, 2026-09-08: parked is green, moving is yellow, so a glance at the\n' +
+    "  // bar says which without reading anything. Material's amber 500, at the same\n" +
+    '  // weight as the green and the red.\n' +
+    '  readonly property color movingYellow: "#ffc107"\n' +
+    '\n' +
+    '  // And red while it is charging, for the same reason the live mark is a\n' +
+    '  // literal green: "it is filling up" should read the same in every theme\n' +
+    "  // rather than turning into whatever the accent is today. Material's red 500\n" +
+    "  // to the green's 500, so the two sit at the same weight. The error state\n" +
+    '  // keeps Color.urgent — a fault and a charge are both red, and the word\n' +
+    '  // beside the dot is what tells them apart, the same way it already\n' +
+    '  // distinguishes driving from parked.\n' +
+    '  readonly property color chargeRed: "#f44336"\n' +
+    '\n' +
+    '  // What the panel accents itself with: the charge colour while it is\n' +
+    "  // charging, the theme's accent the rest of the time.\n" +
+    '  readonly property color liveAccent: charging ? chargeRed : accent\n' +
+    '\n' +
+    '  // ----------------------------------------------------------------- settings\n' +
+    '\n' +
+    '  readonly property string configuredVin: setting("vin", "")\n' +
+    '  property string selectedVin: configuredVin\n' +
+    '  readonly property int panelWidth: setting("panelWidth", 380)\n' +
+    '  // How many columns the panel is laid out in. Two by default: stacked, this\n' +
+    '  // panel is taller than a 1080p screen, so the controls sit below the fold and\n' +
+    '  // the answer to "is it locked" costs a scroll. One restores the original\n' +
+    '  // stacked panel for narrow screens and vertical bars.\n' +
+    '  readonly property int panelColumns: Math.max(1, Math.min(2, setting("panelColumns", 2)))\n' +
+    '  readonly property int mapZoom: setting("mapZoom", 16)\n' +
+    '  readonly property string mapStyle: setting("mapStyle", "Auto")\n' +
+    '  readonly property int statePollMinutes: setting("statePollMinutes", 5)\n' +
+    '  readonly property int parkThrottleMinutes: setting("parkThrottleMinutes", 15)\n' +
+    '  readonly property bool showAddress: setting("showAddress", true)\n' +
+    '  readonly property string mapsUrl: setting("mapsUrl",\n' +
+    '    "https://www.google.com/maps/search/?api=1&query={lat},{lon}")\n' +
+    '\n' +
+    '  // Whether the theme in force is a light one, judged off the panel\n' +
+    "  // background's luminance rather than off a theme name: a theme can be\n" +
+    '  // called anything, but a background either reflects light or it does not.\n' +
+    '  // The coefficients are the usual perceptual weights: green carries most of\n' +
+    '  // what the eye reads as brightness.\n' +
+    '  readonly property bool lightTheme: {\n' +
+    '    var bg = Color.background\n' +
+    '    return (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) > 0.5\n' +
+    '  }\n' +
+    '\n' +
+    "  // OpenStreetMap's own tiles, because they are the ones that stay free\n" +
+    "  // without an account. CARTO's matched light and dark pair used to be the\n" +
+    '  // default and read better behind a marker, but CARTO now enforces an API\n' +
+    '  // key on its basemaps and a keyless request comes back stamped "API KEY\n' +
+    '  // NEEDED" across the map. A default that needs a signup is not a default.\n' +
+    '  //\n' +
+    '  // OSM ships one style and it is a pale one, so a dark theme gets it inverted\n' +
+    '  // rather than swapped: a light map in a dark panel is a torch in the face.\n' +
+    '  // Auto follows the theme; the explicit choices are for anyone who wants the\n' +
+    '  // map to disagree on purpose.\n' +
+    '  readonly property string effectiveMapStyle:\n' +
+    '    mapStyle === "Auto" ? (lightTheme ? "Light" : "Dark") : mapStyle\n' +
+    '\n' +
+    '  readonly property string tileUrl: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"\n' +
+    '\n' +
+    '  readonly property bool darkMap: effectiveMapStyle === "Dark"\n' +
+    '\n' +
+    '  // Whether what is about to be drawn is a pale map. Anything painted on top\n' +
+    '  // of it, the attribution and the ring around the marker, has to contrast with\n' +
+    '  // the tiles rather than with the panel, and those two can disagree: a dark\n' +
+    '  // theme with the map forced to Light is exactly where white-on-white went\n' +
+    '  // missing.\n' +
+    '  readonly property bool lightMap: effectiveMapStyle !== "Dark"\n' +
+    '\n' +
+    '\n' +
+    '  // Qt decides for itself whether a string is markup, and a Text or tooltip in\n' +
+    '  // that mode fetches `<img src="http://...">` for real, from inside the shell\n' +
+    '  // process. The address comes from Nominatim and the error text from Tesla, so\n' +
+    "  // neither is ours to vouch for. The panel's own Text elements are pinned to\n" +
+    '  // PlainText; the bar tooltip belongs to the shell and is not ours to set, so\n' +
+    '  // anything heading that way has its angle brackets taken off first — without\n' +
+    '  // a `<` there is nothing for Qt to mistake for a tag.\n' +
+    '  function plain(s) {\n' +
+    '    return String(s === undefined || s === null ? "" : s).replace(/[<>]/g, "")\n' +
+    '  }\n' +
+    '\n' +
+    '  function cmd(args) {\n' +
+    '    var base = [root.script,\n' +
+    '                "--park-throttle", String(root.parkThrottleMinutes * 60),\n' +
+    '                "--tile-url", root.tileUrl]\n' +
+    '    if (root.selectedVin !== "") base = base.concat(["--vin", root.selectedVin])\n' +
+    '    return base.concat(args)\n' +
+    '  }\n' +
+    '\n' +
+    '  // -------------------------------------------------------------------- state\n' +
+    '\n' +
+    '  // What the free poll last said: "online", "asleep", "offline", or "" before\n' +
+    '  // the first answer.\n' +
+    '  property string carState: ""\n' +
+    '  // `state` supplies these without waking any car, so the selector can be\n' +
+    '  // drawn before a full reading is available.\n' +
+    '  property string selectedCarName: "Tesla"\n' +
+    '  property var availableCars: []\n' +
+    '  // The last full reading, from `tesla car`. Null until one lands.\n' +
+    '  property var reading: null\n' +
+    '  // The tile plan for the position in `reading`.\n' +
+    '  property var mapPlan: null\n' +
+    '  // Parked line comes pre-joined from `tesla place` (number-first or\n' +
+    '  // number-last by the country of the pin). Street and town are kept so a\n' +
+    '  // moving car can drop the house number without another lookup.\n' +
+    '  property string placeStreet: ""\n' +
+    '  property string placeTown: ""\n' +
+    '  property string placeParked: ""\n' +
+    '\n' +
+    '  readonly property bool usEnglish: {\n' +
+    '    var name = String(Qt.locale().name).replace(/-/g, "_").replace(/\\.[^.]+$/, "")\n' +
+    '    return name.indexOf("en_US") === 0 || name.indexOf("en_CA") === 0\n' +
+    '  }\n' +
+    '\n' +
+    '  // At speed the nearest address changes every second, so the number is\n' +
+    "  // dropped and only the road is named. Parked, the script's `place` is the\n" +
+    '  // whole line.\n' +
+    '  readonly property string place: {\n' +
+    '    if (driving)\n' +
+    '      return [placeStreet, placeTown].filter(function(part) { return part !== "" }).join(", ")\n' +
+    '    return placeParked\n' +
+    '  }\n' +
+    '  property string errorText: ""\n' +
+    '  // The sentence behind the error, when the script has one. Kept apart so the\n' +
+    '  // status word in the header can stay two words long while the line at the\n' +
+    '  // bottom explains itself.\n' +
+    '  property string errorHint: ""\n' +
+    '\n' +
+    '  readonly property bool signedIn: errorText === ""\n' +
+    '  readonly property bool hasReading: reading !== null && reading.ok === true\n' +
+    '  readonly property bool driving: hasReading && reading.driving === true\n' +
+    '  readonly property bool charging: hasReading && reading.charging === "Charging"\n' +
+    '  readonly property bool asleep: carState === "asleep" || carState === "offline"\n' +
+    '\n' +
+    '  // Whether the car is being held awake by something that is not this widget.\n' +
+    '  // Both cases make it free to ask, and both are cases where the answer is\n' +
+    '  // changing, which is the only time a refresh is worth anything.\n' +
+    '  readonly property bool awakeAnyway: driving || charging\n' +
+    '\n' +
+    '  readonly property real lat: hasReading && reading.lat !== null ? reading.lat : 0\n' +
+    '  readonly property real lon: hasReading && reading.lon !== null ? reading.lon : 0\n' +
+    '  readonly property bool hasPosition: hasReading && reading.lat !== null && reading.lon !== null\n' +
+    '\n' +
+    '  // Ticks so the "seen 4 minutes ago" line ages on screen instead of freezing\n' +
+    '  // at whatever it said when the panel opened.\n' +
+    '  property double now'... 34099 more characters
+  
+      at TestContext.<anonymous> (/home/pi/Projects/tesla.omarchy/tests/dashboard.test.cjs:27:9)
+      at Test.runInAsyncScope (node:async_hooks:226:14)
+      at Test.run (node:internal/test_runner/test:1402:25)
+      at Test.processPendingSubtests (node:internal/test_runner/test:974:18)
+      at Test.postRun (node:internal/test_runner/test:1542:19)
+      at Test.run (node:internal/test_runner/test:1467:12)
+      at async Test.processPendingSubtests (node:internal/test_runner/test:974:7) {
+    generatedMessage: true,
+    code: 'ERR_ASSERTION',
+    actual: 'import QtQuick\nimport Quickshell\nimport Quickshell.Io\nimport qs.Commons\nimport qs.Ui\n\n// Dude, Where\'s My Car: a Tesla in the bar, and a map behind it.\n//\n// The bar shows the Tesla mark and, while the car is moving, how fast. The\n// panel shows where it is, which way it is pointing, how full it is and how\n// far that gets you.\n//\n// The interesting constraint is not the drawing, it is the asking. Tesla\'s\n// API has calls that are answered by Tesla\'s servers and calls that are\n// answered by the car, and the second kind resets the car\'s sleep timer. A\n// widget that refreshed itself every few seconds would quietly stop the car\n// ever sleeping and flatten the battery over a week of standing still.\n//\n// So the bar polls only the free call, online, asleep or offline, and the\n// car itself is asked at three moments: when you open the panel, while it is\n// driving (awake regardless of us) and while it is charging (likewise). A\n// parked car is left alone. `bin/tesla` enforces that a second\n// time from the other side, so a mistake in this file cannot flatten anything.\n//\n// Glyphs are \\u escapes rather than literal characters, so the source survives\n// editors and patches that mangle private-use codepoints.\nPanel {\n  id: root\n\n  moduleName: "jankeesvw.tesla"\n  ipcTarget: "jankeesvw.tesla"\n\n  // The script that does the talking sits next to this file, so the plugin\n  // runs from wherever it was installed without putting anything on $PATH.\n  readonly property string script:\n    Qt.resolvedUrl("bin/tesla").toString().replace(/^file:\\/\\//, "")\n\n  readonly property color foreground: bar ? bar.foreground : Color.foreground\n  // The bar exposes a foreground and a font, not an accent; the accent is a\n  // theme-level colour, so it is read straight off Color.\n  readonly property color accent: Color.accent\n  readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family\n\n  // Omarchy\'s palette has a foreground, an accent, an urgent and a muted, and\n  // no green. This is the one place a literal colour is right: a live\n  // indicator is green everywhere, in every theme, and one that drifted to\n  // whatever the accent happened to be would stop reading as "it is up" and\n  // start reading as decoration. It marks the panel\'s status dot and the bar\n  // mark while the car is moving, and nothing else.\n  readonly property color liveGreen: "#4caf50"\n\n  // The bar number\'s other colour: yellow while the car is moving. Fred\'s\n  // rule, 2026-09-08: parked is green, moving is yellow, so a glance at the\n  // bar says which without reading anything. Material\'s amber 500, at the same\n  // weight as the green and the red.\n  readonly property color movingYellow: "#ffc107"\n\n  // And red while it is charging, for the same reason the live mark is a\n  // literal green: "it is filling up" should read the same in every theme\n  // rather than turning into whatever the accent is today. Material\'s red 500\n  // to the green\'s 500, so the two sit at the same weight. The error state\n  // keeps Color.urgent — a fault and a charge are both red, and the word\n  // beside the dot is what tells them apart, the same way it already\n  // distinguishes driving from parked.\n  readonly property color chargeRed: "#f44336"\n\n  // What the panel accents itself with: the charge colour while it is\n  // charging, the theme\'s accent the rest of the time.\n  readonly property color liveAccent: charging ? chargeRed : accent\n\n  // ----------------------------------------------------------------- settings\n\n  readonly property string configuredVin: setting("vin", "")\n  property string selectedVin: configuredVin\n  readonly property int panelWidth: setting("panelWidth", 380)\n  // How many columns the panel is laid out in. Two by default: stacked, this\n  // panel is taller than a 1080p screen, so the controls sit below the fold and\n  // the answer to "is it locked" costs a scroll. One restores the original\n  // stacked panel for narrow screens and vertical bars.\n  readonly property int panelColumns: Math.max(1, Math.min(2, setting("panelColumns", 2)))\n  readonly property int mapZoom: setting("mapZoom", 16)\n  readonly property string mapStyle: setting("mapStyle", "Auto")\n  readonly property int statePollMinutes: setting("statePollMinutes", 5)\n  readonly property int parkThrottleMinutes: setting("parkThrottleMinutes", 15)\n  readonly property bool showAddress: setting("showAddress", true)\n  readonly property string mapsUrl: setting("mapsUrl",\n    "https://www.google.com/maps/search/?api=1&query={lat},{lon}")\n\n  // Whether the theme in force is a light one, judged off the panel\n  // background\'s luminance rather than off a theme name: a theme can be\n  // called anything, but a background either reflects light or it does not.\n  // The coefficients are the usual perceptual weights: green carries most of\n  // what the eye reads as brightness.\n  readonly property bool lightTheme: {\n    var bg = Color.background\n    return (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) > 0.5\n  }\n\n  // OpenStreetMap\'s own tiles, because they are the ones that stay free\n  // without an account. CARTO\'s matched light and dark pair used to be the\n  // default and read better behind a marker, but CARTO now enforces an API\n  // key on its basemaps and a keyless request comes back stamped "API KEY\n  // NEEDED" across the map. A default that needs a signup is not a default.\n  //\n  // OSM ships one style and it is a pale one, so a dark theme gets it inverted\n  // rather than swapped: a light map in a dark panel is a torch in the face.\n  // Auto follows the theme; the explicit choices are for anyone who wants the\n  // map to disagree on purpose.\n  readonly property string effectiveMapStyle:\n    mapStyle === "Auto" ? (lightTheme ? "Light" : "Dark") : mapStyle\n\n  readonly property string tileUrl: "https://tile.openstreetmap.org/{z}/{x}/{y}.png"\n\n  readonly property bool darkMap: effectiveMapStyle === "Dark"\n\n  // Whether what is about to be drawn is a pale map. Anything painted on top\n  // of it, the attribution and the ring around the marker, has to contrast with\n  // the tiles rather than with the panel, and those two can disagree: a dark\n  // theme with the map forced to Light is exactly where white-on-white went\n  // missing.\n  readonly property bool lightMap: effectiveMapStyle !== "Dark"\n\n\n  // Qt decides for itself whether a string is markup, and a Text or tooltip in\n  // that mode fetches `<img src="http://...">` for real, from inside the shell\n  // process. The address comes from Nominatim and the error text from Tesla, so\n  // neither is ours to vouch for. The panel\'s own Text elements are pinned to\n  // PlainText; the bar tooltip belongs to the shell and is not ours to set, so\n  // anything heading that way has its angle brackets taken off first — without\n  // a `<` there is nothing for Qt to mistake for a tag.\n  function plain(s) {\n    return String(s === undefined || s === null ? "" : s).replace(/[<>]/g, "")\n  }\n\n  function cmd(args) {\n    var base = [root.script,\n                "--park-throttle", String(root.parkThrottleMinutes * 60),\n                "--tile-url", root.tileUrl]\n    if (root.selectedVin !== "") base = base.concat(["--vin", root.selectedVin])\n    return base.concat(args)\n  }\n\n  // -------------------------------------------------------------------- state\n\n  // What the free poll last said: "online", "asleep", "offline", or "" before\n  // the first answer.\n  property string carState: ""\n  // `state` supplies these without waking any car, so the selector can be\n  // drawn before a full reading is available.\n  property string selectedCarName: "Tesla"\n  property var availableCars: []\n  // The last full reading, from `tesla car`. Null until one lands.\n  property var reading: null\n  // The tile plan for the position in `reading`.\n  property var mapPlan: null\n  // Parked line comes pre-joined from `tesla place` (number-first or\n  // number-last by the country of the pin). Street and town are kept so a\n  // moving car can drop the house number without another lookup.\n  property string placeStreet: ""\n  property string placeTown: ""\n  property string placeParked: ""\n\n  readonly property bool usEnglish: {\n    var name = String(Qt.locale().name).replace(/-/g, "_").replace(/\\.[^.]+$/, "")\n    return name.indexOf("en_US") === 0 || name.indexOf("en_CA") === 0\n  }\n\n  // At speed the nearest address changes every second, so the number is\n  // dropped and only the road is named. Parked, the script\'s `place` is the\n  // whole line.\n  readonly property string place: {\n    if (driving)\n      return [placeStreet, placeTown].filter(function(part) { return part !== "" }).join(", ")\n    return placeParked\n  }\n  property string errorText: ""\n  // The sentence behind the error, when the script has one. Kept apart so the\n  // status word in the header can stay two words long while the line at the\n  // bottom explains itself.\n  property string errorHint: ""\n\n  readonly property bool signedIn: errorText === ""\n  readonly property bool hasReading: reading !== null && reading.ok === true\n  readonly property bool driving: hasReading && reading.driving === true\n  readonly property bool charging: hasReading && reading.charging === "Charging"\n  readonly property bool asleep: carState === "asleep" || carState === "offline"\n\n  // Whether the car is being held awake by something that is not this widget.\n  // Both cases make it free to ask, and both are cases where the answer is\n  // changing, which is the only time a refresh is worth anything.\n  readonly property bool awakeAnyway: driving || charging\n\n  readonly property real lat: hasReading && reading.lat !== null ? reading.lat : 0\n  readonly property real lon: hasReading && reading.lon !== null ? reading.lon : 0\n  readonly property bool hasPosition: hasReading && reading.lat !== null && reading.lon !== null\n\n  // Ticks so the "seen 4 minutes ago" line ages on screen instead of freezing\n  // at whatever it said when the panel opened.\n  property double now'... 34099 more characters,
+    expected: /Math\.max\(380, setting\("panelWidth", 380\)\)/,
+    operator: 'match',
+    diff: 'simple'
+  }

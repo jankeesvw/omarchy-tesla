@@ -5,8 +5,18 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 
 bash -n "$ROOT/bin/tesla"
+python3 -m py_compile "$ROOT/bin/locations.py"
 "$ROOT/test/smoke"
 "$ROOT/test/regional-routing"
 "$ROOT/test/reading"
 "$ROOT/test/commands"
 "$ROOT/test/throttle"
+
+# The data view's model and the tariff store. Python ships with Omarchy; node
+# does not, so its tests run where it exists and are skipped out loud where not.
+python3 -m unittest -q "$ROOT/tests/test_locations.py"
+if command -v node >/dev/null 2>&1; then
+  node --test "$ROOT/tests/dashboard.test.cjs"
+else
+  echo "skipped: node not installed, tests/dashboard.test.cjs not run"
+fi

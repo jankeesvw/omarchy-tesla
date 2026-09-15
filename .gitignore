@@ -5,3 +5,5 @@
 fixture.json
 *token*
 *.local.*
+__pycache__/
+*.pyc

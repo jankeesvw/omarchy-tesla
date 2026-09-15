@@ -72,7 +72,7 @@ Panel {
 
   readonly property string configuredVin: setting("vin", "")
   property string selectedVin: configuredVin
-  readonly property int panelWidth: setting("panelWidth", 380)
+  readonly property int panelWidth: Math.max(380, setting("panelWidth", 380))
   // How many columns the panel is laid out in. Two by default: stacked, this
   // panel is taller than a 1080p screen, so the controls sit below the fold and
   // the answer to "is it locked" costs a scroll. One restores the original
@@ -411,8 +411,10 @@ Panel {
     interval: 250
     onTriggered: {
       if (!root.hasPosition || mapProc.running) return
-      var w = Math.round(mapArea.width)
-      var h = Math.round(mapArea.height)
+      // Whichever view is showing gets the tiles cut to its own map: the
+      // cockpit's three-to-two panel, or the data view's full-body Map tab.
+      var w = Math.round(root.dataView ? dashboard.mapViewportWidth : mapArea.width)
+      var h = Math.round(root.dataView ? dashboard.mapViewportHeight : mapArea.height)
       if (w <= 0 || h <= 0) return
       mapProc.command = root.cmd(["map", String(root.lat), String(root.lon),
                                   String(root.mapZoom), String(w), String(h)])
@@ -942,7 +944,20 @@ Panel {
 
   // ------------------------------------------------------------------- panel
 
-  PopupCard {
+  // Two views in one popup. The cockpit is the panel as it has always been:
+  // map, readings, switches, Wake. The data view is the tabbed browser of
+  // every field the car reports, with the tariff notebook, reached from the
+  // Data button in the cockpit's header and left through its Cockpit button.
+  // Hermes delivered the data view on 2026-09-15 as a replacement for the
+  // cockpit; the switches and the click-to-wake were not part of that brief,
+  // so it lives beside the cockpit rather than instead of it.
+  property bool dataView: false
+  onDataViewChanged: {
+    planMap()
+    if (dataView) dashboard.forceActiveFocus()
+  }
+
+  KeyboardPanel {
     id: popup
     anchorItem: root.barRange !== "" ? rangeLabel : button
     bar: root.bar
@@ -950,16 +965,22 @@ Panel {
     open: root.opened
     // Click, not hover: opening this fetches map tiles and possibly asks the
     // car for a reading, so it should happen because you meant it rather than
-    // because the cursor crossed the bar.
-    triggerMode: "click"
+    // because the cursor crossed the bar. (KeyboardPanel is click-only.)
+    focusTarget: root.dataView ? dashboard : content
     contentWidth: popup.fittedContentWidth(
       Style.space(root.panelWidth) * root.panelColumns
       + Style.space(16) * (root.panelColumns - 1))
-    contentHeight: popup.fittedContentHeight(content.implicitHeight)
+    // The cockpit is as tall as its content. The data view is a fixed
+    // viewport that pages its fields to fit, so it never needs scrolling.
+    contentHeight: root.dataView
+      ? popup.fittedContentHeight(Style.space(600))
+      : popup.fittedContentHeight(content.implicitHeight)
 
     Grid {
       id: content
       anchors.fill: parent
+      visible: !root.dataView
+      Keys.onEscapePressed: root.close()
       // One column is the original panel, stacked the way it has always been.
       // Two puts the readings beside the controls, which is the whole point:
       // at one column this panel is taller than a 1080p screen, so the half
@@ -1007,6 +1028,20 @@ Panel {
             anchors.right: parent.right
             anchors.verticalCenter: parent.verticalCenter
             spacing: Style.space(4)
+
+            // The way into the data view: every field the car reports, in
+            // tabs, with the tariff notebook. The cockpit stays the front
+            // page because the map and the switches are what a glance is for.
+            Button {
+              anchors.verticalCenter: parent.verticalCenter
+              text: "Data \u203A"
+              bordered: true
+              fontSize: Style.font.caption
+              verticalPadding: Style.space(2)
+              foreground: root.foreground
+              fontFamily: root.fontFamily
+              onClicked: root.dataView = true
+            }
 
             // No model name here. The panel is about one specific car and
             // naming it on every glance is noise; the bar's tooltip says which
@@ -1694,6 +1729,27 @@ Panel {
         }
       }
     }
+
+    Dashboard {
+      id: dashboard
+      anchors.fill: parent
+      visible: root.dataView
+      reading: root.reading
+      status: root.stateWord + " \u00b7 " + root.summary
+      foreground: root.foreground
+      accent: root.liveAccent
+      background: Color.background
+      fontFamily: root.fontFamily
+      mapPlan: root.mapPlan
+      darkMap: root.darkMap
+      cars: root.availableCars
+      selectedVin: root.selectedVin
+      onSelectCar: function(vin, name) { root.selectCar(vin, name) }
+      onBack: root.dataView = false
+      onCloseRequested: root.close()
+      onMapViewportWidthChanged: root.planMap()
+      onMapViewportHeightChanged: root.planMap()
+    }
   }
 
   // A control is a button that says what pressing it will do. The state it
@@ -1812,6 +1868,30 @@ Panel {
   // to see what a moving car looks like without one.
   IpcHandler {
     target: "jankeesvw.tesla.test"
+
+    function dashboardTab(index: int): string {
+      dashboard.tabIndex = Math.max(0, Math.min(dashboard.tabs.length - 1, index))
+      root.dataView = true
+      root.open()
+      dashboard.forceActiveFocus()
+      return dashboard.section
+    }
+
+    function cockpit(): string {
+      root.dataView = false
+      root.open()
+      return "cockpit"
+    }
+
+    function dashboardStatus(): string {
+      return JSON.stringify({view: root.dataView ? "data" : "cockpit",
+        width: dashboard.width, height: dashboard.height,
+        section: dashboard.section, fields: dashboard.items.length,
+        page: dashboard.page, pages: dashboard.pages, capacity: dashboard.capacity,
+        fits: dashboard.fitsViewport, contentFits: dashboard.contentFits, opened: root.opened,
+        distanceShare: dashboard.analytics.distanceShare,
+        timeShare: dashboard.analytics.timeShare})
+    }
 
     function drive(speed: int, heading: int): string {
       if (!root.hasReading) return "no reading to base a drive on yet"
