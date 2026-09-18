@@ -1,0 +1,12 @@
+✔ all supplied leaf fields are accessible, grouped and paginated without discarding unknown fields (1.947095ms)
+✔ cost scenario distinguishes free, unknown and invalid inputs; never calls it measured (0.587775ms)
+✔ the panel keeps the cockpit and adds the bounded data view beside it (1.068293ms)
+✔ Owner API cannot infer FSD/manual distance or time from odometer and driving state (0.44908ms)
+ℹ tests 4
+ℹ suites 0
+ℹ pass 4
+ℹ fail 0
+ℹ cancelled 0
+ℹ skipped 0
+ℹ todo 0
+ℹ duration_ms 45.084073

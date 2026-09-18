@@ -1,0 +1,10 @@
+test_blank_or_lowercase_currency_is_dollars_or_upper_case (test_locations.LocationsTests.test_blank_or_lowercase_currency_is_dollars_or_upper_case) ... ok
+test_cli_error_names_the_field_and_never_echoes_the_value (test_locations.LocationsTests.test_cli_error_names_the_field_and_never_echoes_the_value) ... ok
+test_cli_saves_one_line_without_waiting_for_parent_to_close_stdin (test_locations.LocationsTests.test_cli_saves_one_line_without_waiting_for_parent_to_close_stdin) ... ok
+test_explicit_zero_persists_privately_and_retains_tariff_history (test_locations.LocationsTests.test_explicit_zero_persists_privately_and_retains_tariff_history) ... ok
+test_unknown_is_not_free_and_invalid_prices_never_change_store (test_locations.LocationsTests.test_unknown_is_not_free_and_invalid_prices_never_change_store) ... ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.057s
+
+OK

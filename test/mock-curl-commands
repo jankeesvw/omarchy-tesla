@@ -1,0 +1,81 @@
+#!/usr/bin/env bash
+#
+# A curl that answers command endpoints, and records what was sent.
+#
+# The plain mock-curl deliberately throws request bodies away, because in the
+# real client stdin carries the bearer token. Commands put their body in a file
+# instead, for exactly that reason, which makes the body something a test can
+# read without ever touching a credential. That file is what this records.
+#
+# What the car does is scripted from the environment:
+#   MOCK_STATE_SEQUENCE   states the free poll returns, in order, space separated.
+#                         The last one repeats once the list runs out.
+#   MOCK_RESULT           "true" or "false": whether the car accepts the command.
+#   MOCK_REASON           the refusal, when it does not.
+
+set -euo pipefail
+
+url=""
+body_file=""
+previous=""
+
+for arg in "$@"; do
+  printf '%s\n' "$arg" >> "$MOCK_CURL_LOG"
+  case "$previous" in
+    --data-binary) body_file="${arg#@}" ;;
+  esac
+  case "$arg" in
+    https://*) url="$arg" ;;
+  esac
+  previous="$arg"
+done
+
+# The auth header arrives on stdin as a curl config, the same as in the real
+# client. Read it and drop it: it is the one thing here that is a secret.
+if [ ! -t 0 ]; then
+  while IFS= read -r _; do :; done
+fi
+
+if [ -n "$body_file" ] && [ -r "$body_file" ]; then
+  cat "$body_file" >> "$MOCK_CURL_BODIES"
+  printf '\n' >> "$MOCK_CURL_BODIES"
+fi
+
+# One line per state poll, so the test can tell "it was awake already" from
+# "it was woken", which is the whole of the sleep policy on the command side.
+next_state() {
+  local count states
+  states=(${MOCK_STATE_SEQUENCE:-online})
+  count=$(wc -l < "$MOCK_STATE_CALLS" 2>/dev/null || echo 0)
+  printf 'poll\n' >> "$MOCK_STATE_CALLS"
+  if [ "$count" -ge "${#states[@]}" ]; then
+    printf '%s' "${states[$(( ${#states[@]} - 1 ))]}"
+  else
+    printf '%s' "${states[$count]}"
+  fi
+}
+
+case "$url" in
+  */oauth2/v3/token)
+    jq -cn --arg access "$MOCK_ACCESS_TOKEN" --arg refresh "$MOCK_REFRESH_TOKEN" \
+      '{access_token: $access, refresh_token: $refresh, expires_in: 28800}'
+    ;;
+  */api/1/products)
+    jq -cn '{response: [{id: 1, id_s: "1", vin: "TESTVIN", state: "online"}]}'
+    ;;
+  */api/1/vehicles/1/wake_up)
+    printf 'wake\n' >> "$MOCK_WAKE_CALLS"
+    jq -cn '{response: {state: "online"}}'
+    ;;
+  */api/1/vehicles/1/command/*)
+    jq -cn --argjson result "${MOCK_RESULT:-true}" --arg reason "${MOCK_REASON:-}" \
+      '{response: {result: $result, reason: $reason}}'
+    ;;
+  */api/1/vehicles/1)
+    jq -cn --arg state "$(next_state)" '{response: {state: $state}}'
+    ;;
+  *)
+    printf 'unexpected mock curl URL: %s\n' "$url" >&2
+    exit 1
+    ;;
+esac

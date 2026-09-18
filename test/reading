@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+#
+# reading_json, on its own. This is the function every other part of the plugin
+# reads the car through, and the fields the controls depend on are the ones a
+# real car turned out to disagree with the documentation about.
+
+set -euo pipefail
+
+ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
+TEST_TMP=$(mktemp -d)
+trap 'rm -rf -- "$TEST_TMP"' EXIT
+
+fail() {
+  printf 'FAIL: %s\n' "$*" >&2
+  exit 1
+}
+
+# Lift the function out of the script rather than running the script, so this
+# stays a test of the conversion and not of the network.
+sed -n '/^reading_json() {/,/^}/p' "$ROOT/bin/tesla" > "$TEST_TMP/reading_json.sh"
+
+# A car with everything filled in, in the units a US car uses.
+base() {
+  jq -n '{
+    vin: "TESTVIN",
+    gui_settings: {gui_distance_units: "mi/hr", gui_temperature_units: "F",
+                   gui_range_display: "Rated", gui_tirepressure_units: "Psi"},
+    drive_state: {latitude: 33.75, longitude: -84.39, heading: 90, gps_as_of: 1,
+                  shift_state: null, speed: null},
+    charge_state: {battery_level: 66, charge_limit_soc: 95,
+                   charging_state: "Disconnected", battery_range: 156.7,
+                   charge_port_door_open: false, charge_current_request: 48,
+                   charge_current_request_max: 48},
+    vehicle_state: {vehicle_name: "Test", locked: true, sentry_mode: true,
+                    valet_mode: false, car_version: "2026.32.5",
+                    fd_window: 0, fp_window: 0, rd_window: 0, rp_window: 0},
+    climate_state: {is_climate_on: false, driver_temp_setting: 19.5,
+                    defrost_mode: 0, climate_keeper_mode: 0,
+                    steering_wheel_heater: null,
+                    seat_heater_left: 0, seat_heater_right: 0,
+                    seat_heater_rear_left: null, seat_heater_rear_center: null,
+                    seat_heater_rear_right: null},
+    vehicle_config: {car_type: "model3"}
+  }'
+}
+
+read_with() {
+  local raw
+  raw=$(base | jq -c "$1")
+  OMARCHY_TESLA_RAW="$raw" bash -c '
+    now() { echo 1770000000; }
+    source "$1"
+    reading_json "$OMARCHY_TESLA_RAW" online true' _ "$TEST_TMP/reading_json.sh"
+}
+
+field() {
+  printf '%s' "$1" | jq -r "$2"
+}
+
+# ---------------------------------------------------- the climate keeper
+
+# The bug this test exists for. A real 2026 Model 3 answers climate_keeper_mode
+# with the word, not the number the set command takes, and a panel comparing it
+# against 2 for dog mode never matches. Both forms have to land on the integer.
+for pair in "0:0" "1:1" "2:2" "3:3"; do
+  out=$(read_with ".climate_state.climate_keeper_mode = ${pair%%:*}")
+  [ "$(field "$out" .climate_keeper)" = "${pair##*:}" ] \
+    || fail "keeper ${pair%%:*} did not stay ${pair##*:}"
+done
+
+for pair in "off:0" "on:1" "keep:1" "dog:2" "camp:3"; do
+  out=$(read_with ".climate_state.climate_keeper_mode = \"${pair%%:*}\"")
+  [ "$(field "$out" .climate_keeper)" = "${pair##*:}" ] \
+    || fail "keeper \"${pair%%:*}\" should read as ${pair##*:}, got $(field "$out" .climate_keeper)"
+done
+
+out=$(read_with '.climate_state.climate_keeper_mode = "something new"')
+[ "$(field "$out" .climate_keeper)" = 0 ] \
+  || fail "an unknown keeper mode should read as off"
+
+# ------------------------------------------------------- what is fitted
+
+# Absent hardware stays absent. A null here is what tells the panel not to draw
+# a control that could only ever collect a refusal.
+out=$(read_with '.')
+[ "$(field "$out" .wheel_heater)" = "null" ] \
+  || fail "a car with no wheel heater should report null"
+[ "$(field "$out" '.seats["rear-left"]')" = "null" ] \
+  || fail "a seat with no heater should report null"
+[ "$(field "$out" '.seats["front-left"]')" = 0 ] \
+  || fail "a fitted seat heater at level 0 is not the same as no seat heater"
+
+# ------------------------------------------------------------- the cabin
+
+# Both forms of the setpoint: Celsius for the wire, the screen's own number for
+# the screen. 19.5C is 67F, and the panel steps the 67.
+out=$(read_with '.')
+[ "$(field "$out" .climate_setpoint_c)" = "19.5" ] \
+  || fail "the Celsius setpoint should pass through untouched"
+[ "$(field "$out" .climate_setpoint)" = "67" ] \
+  || fail "19.5C should show as 67F, got $(field "$out" .climate_setpoint)"
+
+out=$(read_with '.gui_settings.gui_temperature_units = "C"')
+[ "$(field "$out" .climate_setpoint)" = "20" ] \
+  || fail "a Celsius car should show its own number"
+
+# --------------------------------------------------------- the charging
+
+out=$(read_with '.')
+[ "$(field "$out" .plugged_in)" = false ] \
+  || fail "Disconnected is not plugged in"
+
+for state in Charging Stopped Complete NoPower; do
+  out=$(read_with ".charge_state.charging_state = \"$state\"")
+  [ "$(field "$out" .plugged_in)" = true ] \
+    || fail "$state means there is a cable in it"
+done
+
+# ---------------------------------------------------------- the windows
+
+out=$(read_with '.')
+[ "$(field "$out" .windows_open)" = false ] || fail "all four shut is not open"
+
+out=$(read_with '.vehicle_state.rp_window = 1')
+[ "$(field "$out" .windows_open)" = true ] || fail "one window off its seal is open"
+
+printf 'reading tests passed\n'

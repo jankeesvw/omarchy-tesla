@@ -1,0 +1,32 @@
+{
+  "Panel.qml": {
+    "vm": "889ec62e4586441cd11dcf50a12e4a4481d70345696499ad257f0005024a99b6",
+    "current_source": "8c16dc9281eb1d45ac568bd5fbe10b248376f9fbfd662218c44f8fa50d9918a7",
+    "matches": false
+  },
+  "Dashboard.qml": {
+    "vm": "439eafda7aad3b5d356dac43d5d9ac912fe5f37d40a91c7c98c78552aa1db2e5",
+    "current_source": "f33c830a564e36c96bb2b3113960788a7a0ee3aedf8d7369e07b1143078b7cfb",
+    "matches": false
+  },
+  "DashboardModel.js": {
+    "vm": "ba91c90f69d727b3dd5f3b041a7ff81064d2e6349b8121e95a208a9be57be515",
+    "current_source": "ba91c90f69d727b3dd5f3b041a7ff81064d2e6349b8121e95a208a9be57be515",
+    "matches": true
+  },
+  "LocationEditor.qml": {
+    "vm": "c3ad2646cbce446c6ed8bd08395ba1c9d011ecffb6da9ce3828163874367c83a",
+    "current_source": "47c10f381633dfd943b13683251ae0eaaf0f3ea9e9078cd559900de5a7658b06",
+    "matches": false
+  },
+  "bin/locations.py": {
+    "vm": "587d3a7bbf63bf5fab6dff6e08bff274332a0606e1c9042adfd254fd0d9b2aa2",
+    "current_source": "8af12a2d6ab024ad0efae4200ae1694b83e8593ab733aacf4e4efff1b9b784d1",
+    "matches": false
+  },
+  "manifest.json": {
+    "vm": "8265fedfb10e8dcf7a6cfdfc4daf3ae6fed5f362ed3746b647e759934449f243",
+    "current_source": "cac6d3d1e024d7245b8b9f9ecba932923565a372749f9383c0137ca27b4a778c",
+    "matches": false
+  }
+}
