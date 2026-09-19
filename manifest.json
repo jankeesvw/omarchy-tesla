@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jankeesvw.tesla",
   "name": "Tesla",
-  "version": "1.1.0",
+  "version": "1.2.0",
   "author": "Jankees van Woezik",
   "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
   "homepage": "https://github.com/jankeesvw/omarchy-tesla",
@@ -28,6 +28,7 @@
       "statePollMinutes": 5,
       "parkThrottleMinutes": 15,
       "showAddress": true,
+      "notifyOnDrive": true,
       "mapsUrl": "https://www.google.com/maps/search/?api=1&query={lat},{lon}"
     },
     "schema": [
@@ -83,6 +84,13 @@
         "label": "Look the position up by name",
         "defaultValue": true,
         "description": "Turns the coordinates into a street and a town, through OpenStreetMap's Nominatim. Answers are cached per position, so a parked car is one lookup however often you look at it. Off if you would rather nothing but Tesla learned where the car is."
+      },
+      {
+        "key": "notifyOnDrive",
+        "type": "boolean",
+        "label": "Tell me when the car pulls away",
+        "defaultValue": true,
+        "description": "A desktop notification the moment a reading says the car has gone from parked to driving, the same moment the mark in the bar turns green. Only for a departure this widget watched happen: a car already moving when the bar starts is not news."
       },
       {
         "key": "statePollMinutes",

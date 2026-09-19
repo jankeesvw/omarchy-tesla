@@ -50,6 +50,9 @@ run logout >/dev/null
 [ ! -e "$CONFIG/refresh-token" ] && [ ! -e "$CONFIG/access-token" ] \
   || fail "logout left credentials behind"
 
+if run notify 2>/dev/null; then fail "notify without a title was accepted"; fi
+if run notify a b c 2>/dev/null; then fail "notify with three arguments was accepted"; fi
+
 run --help | grep -Fq 'without keeping' \
   || fail "help output is missing"
 

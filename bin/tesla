@@ -922,6 +922,20 @@ cmd_place() {
   cat "$path"
 }
 
+# ----------------------------------------------------------------- notifying
+
+# The panel could call notify-send itself, but every line that reaches the
+# desktop from this plugin goes through here, where the text is an argument
+# and never a command, and where the answer is a line of JSON like everything
+# else's.
+cmd_notify() {
+  local title="$1" body="${2-}"
+  command -v notify-send >/dev/null 2>&1 || fail_json "notify-send is not installed"
+  notify-send -a Tesla -i car -- "$title" "$body" >/dev/null 2>&1 \
+    || fail_json "notify-send failed"
+  printf '{"ok":true}\n'
+}
+
 # ------------------------------------------------------------------- options
 
 usage() {
@@ -936,6 +950,7 @@ tesla: read your Teslas, without keeping them awake.
   wake                      wake a sleeping car. The only call that does
   map LAT LON ZOOM W H      map tiles around a point, fetched and cached
   place LAT LON             that point as a street and a town
+  notify TITLE [BODY]       a desktop notification, from the panel when the car pulls away
 
 A reading in ~/.config/omarchy-tesla/fixture.json overrides `state` and `car`
 entirely, for working on the panel without the car moving under you. Delete the
@@ -987,5 +1002,6 @@ case "$command" in
   wake)   cmd_wake ;;
   map)    [ $# -eq 5 ] || die "map wants LAT LON ZOOM WIDTH HEIGHT"; cmd_map "$@" ;;
   place)  [ $# -eq 2 ] || die "place wants LAT LON"; cmd_place "$@" ;;
+  notify) [ $# -ge 1 ] && [ $# -le 2 ] || die "notify wants TITLE [BODY]"; cmd_notify "$@" ;;
   *)      die "unknown command $command" ;;
 esac

@@ -177,6 +177,14 @@ Three states, no numbers: a bar full of coloured glyphs is a bar you stop
 reading, so the colour is saved for the one thing worth catching out of the
 corner of your eye.
 
+The moment it turns green you also get a desktop notification, with the speed
+and, when a route is set, where it is going and when it gets there. It only
+fires for a departure the widget saw happen: a reading that said parked
+followed by one that says driving. A car already on the road when the bar
+starts, or a switch to a car that is moving, says nothing. A route set after
+pulling away gets one line of its own when it turns up, and then the drive is
+left alone. **Tell me when the car pulls away** turns both off.
+
 **In the panel**, top to bottom:
 
 - The car's name. Accounts with more than one car also get a row of car buttons;
@@ -280,6 +288,7 @@ secrets somewhere else.
 | Zoom | 16 | 16 shows the street and its neighbours. Lower for which town, higher for which parking space. |
 | Panel width | 380 | Sizes the whole panel; everything else is measured off the map. |
 | Look the position up by name | on | Reverse geocoding through Nominatim. |
+| Tell me when the car pulls away | on | A desktop notification when a reading turns the mark green. |
 | Check whether the car is awake every | 5 min | The free poll. Costs the car nothing at any interval. |
 | Leave a parked car alone for | 15 min | The sleep guard. See above before lowering it. |
 | Where a click on the map goes | Google Maps | `{lat}` and `{lon}` are substituted. |
@@ -297,6 +306,7 @@ car [--force]             everything the panel shows, subject to the sleep polic
 wake                      wake a sleeping car. The only call that does
 map LAT LON ZOOM W H      map tiles around a point, fetched and cached
 place LAT LON             that point as a street and a town
+notify TITLE [BODY]       a desktop notification, from the panel when the car pulls away
 ```
 
 Everything prints one line of JSON, including failures, so nothing that goes

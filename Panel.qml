@@ -72,6 +72,7 @@ Panel {
   readonly property int statePollMinutes: setting("statePollMinutes", 5)
   readonly property int parkThrottleMinutes: setting("parkThrottleMinutes", 15)
   readonly property bool showAddress: setting("showAddress", true)
+  readonly property bool notifyOnDrive: setting("notifyOnDrive", true)
   readonly property string mapsUrl: setting("mapsUrl",
     "https://www.google.com/maps/search/?api=1&query={lat},{lon}")
 
@@ -418,6 +419,58 @@ Panel {
 
   Process { id: browserProc }
 
+  // ------------------------------------------------------------ pulling away
+
+  // The same moment the mark turns green, said out loud once. Only a departure
+  // this widget watched happen counts: a reading that said parked followed by
+  // one that says driving. A car already moving when the bar starts, or a
+  // switch to a car that is on the road, is not news, and neither is the
+  // stream of driving readings that follow the first one.
+  //
+  // Where it is going rides along when the car already knows: a route set
+  // before pulling away is in the first driving reading. A route set at the
+  // first red light is not, so that one gets a second line of its own when it
+  // turns up, and then nothing more for the rest of the drive.
+  property bool lastKnown: false
+  property bool lastDriving: false
+  property bool etaAnnounced: false
+
+  // Read off the reading itself rather than off `driving` and `etaText`:
+  // this handler and those bindings both hang off the same change signal,
+  // and nothing promises the bindings have caught up by the time this runs.
+  onReadingChanged: {
+    var r = reading
+    var known = lastKnown
+    var was = lastDriving
+    var have = r !== null && r.ok === true
+    var moving = have && r.driving === true
+    var routed = moving && !!r.destination && !!r.eta
+    lastKnown = have
+    lastDriving = moving
+    if (!moving) { etaAnnounced = false; return }
+    if (known && !was) {
+      etaAnnounced = routed
+      if (notifyOnDrive) announceDriving(r, routed)
+    } else if (known && was && routed && !etaAnnounced) {
+      etaAnnounced = true
+      if (notifyOnDrive) announce(carName + " is heading for " + r.destination, etaLine(r))
+    }
+  }
+
+  Process { id: notifyProc }
+
+  function announceDriving(r, routed) {
+    var line = r.speed === null ? "Driving" : "Driving " + r.speed + " " + r.speed_unit
+    if (routed) line += " · " + etaLine(r)
+    announce(carName + " is on the move", line)
+  }
+
+  function announce(title, body) {
+    if (notifyProc.running) return
+    notifyProc.command = root.cmd(["notify", title, body])
+    notifyProc.running = true
+  }
+
   function openInMaps() {
     if (!hasPosition) return
     var url = mapsUrl.replace(/\{lat\}/g, String(lat)).replace(/\{lon\}/g, String(lon))
@@ -520,13 +573,13 @@ Panel {
   // "Home at 19:48 · 2.6 km". The clock time rather than "in six
   // minutes", because arriving is something you meet the car at, and a time is
   // what you compare against the one on your own wrist.
-  readonly property string etaText: {
-    if (!navigating) return ""
-    var parts = [reading.destination + " at "
-                 + Qt.formatTime(new Date(reading.eta * 1000), clockFormat)]
-    if (reading.eta_distance !== null && reading.eta_distance !== undefined)
-      parts.push(reading.eta_distance + " " + reading.range_unit)
-    if (reading.eta_delay) parts.push(reading.eta_delay + " min of traffic")
+  readonly property string etaText: navigating ? etaLine(reading) : ""
+
+  function etaLine(r) {
+    var parts = [r.destination + " at " + Qt.formatTime(new Date(r.eta * 1000), clockFormat)]
+    if (r.eta_distance !== null && r.eta_distance !== undefined)
+      parts.push(r.eta_distance + " " + r.range_unit)
+    if (r.eta_delay) parts.push(r.eta_delay + " min of traffic")
     return parts.join(" · ")
   }
 
