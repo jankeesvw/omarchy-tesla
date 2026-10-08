@@ -743,6 +743,19 @@ cmd_car() {
     return 0
   fi
 
+  # A car that has only just woken can answer with the envelope but without
+  # the states inside it. Filed, that reading is a car with no battery and no
+  # location, and the park throttle then shows it for a quarter of an hour. The
+  # last real reading is the better answer, and the next poll tries again.
+  if ! printf '%s' "$raw" | jq -e '.charge_state and .drive_state' >/dev/null 2>&1; then
+    if [ -n "$cached" ]; then
+      serve_cache "$cached" "$state"
+    else
+      fail_json "incomplete reading" "the car answered without its charge and drive state"
+    fi
+    return 0
+  fi
+
   local reading
   reading=$(reading_json "$raw" "$state" true)
   printf '%s' "$reading" | write_private "$cache"
