@@ -4,6 +4,7 @@ import QtQuick.Shapes
 import Qt5Compat.GraphicalEffects
 import qs.Commons
 
+import qs.Commons as Commons
 // The map: tiles laid out under a marker that points the way the car is
 // pointing.
 //
@@ -37,8 +38,8 @@ Item {
   property bool darkMap: false
   // Dimmed when the reading it came from is old, so a stale map looks stale.
   property bool stale: false
-  property color foreground: Color.foreground
-  property color accent: Color.accent
+  property color foreground: Commons.Color.foreground
+  property color accent: Commons.Color.accent
   property string fontFamily: Style.font.family
 
   readonly property bool ready: plan && plan.ok === true && plan.tiles && plan.tiles.length > 0

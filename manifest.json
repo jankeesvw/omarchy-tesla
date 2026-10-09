@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "jankeesvw.tesla",
   "name": "Tesla",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "author": "Jankees van Woezik",
   "description": "Your Tesla in the bar: where it is, how full it is, and how far that gets you",
   "homepage": "https://github.com/jankeesvw/omarchy-tesla",

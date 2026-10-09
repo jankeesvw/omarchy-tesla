@@ -2,6 +2,7 @@ import QtQuick
 import QtQuick.Shapes
 import qs.Commons
 
+import qs.Commons as Commons
 // The Tesla wordmark's T, drawn rather than typed. No Nerd Font ships it, and
 // a generic car glyph in the bar would say "a car" when the whole joke is that
 // it says "your car".
@@ -13,7 +14,7 @@ Item {
   id: root
 
   property real iconSize: Style.font.icon
-  property color color: Color.foreground
+  property color color: Commons.Color.foreground
 
   implicitWidth: iconSize
   implicitHeight: iconSize

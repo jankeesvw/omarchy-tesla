@@ -2,6 +2,7 @@ import QtQuick
 import Quickshell
 import Quickshell.Io
 import qs.Commons
+import qs.Commons as Commons
 import qs.Ui
 
 // Dude, Where's My Car: a Tesla in the bar, and a map behind it.
@@ -35,10 +36,10 @@ Panel {
   readonly property string script:
     Qt.resolvedUrl("bin/tesla").toString().replace(/^file:\/\//, "")
 
-  readonly property color foreground: bar ? bar.foreground : Color.foreground
+  readonly property color foreground: bar ? bar.foreground : Commons.Color.foreground
   // The bar exposes a foreground and a font, not an accent; the accent is a
   // theme-level colour, so it is read straight off Color.
-  readonly property color accent: Color.accent
+  readonly property color accent: Commons.Color.accent
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
   // Omarchy's palette has a foreground, an accent, an urgent and a muted, and
@@ -53,7 +54,7 @@ Panel {
   // literal green: "it is filling up" should read the same in every theme
   // rather than turning into whatever the accent is today. Material's red 500
   // to the green's 500, so the two sit at the same weight. The error state
-  // keeps Color.urgent — a fault and a charge are both red, and the word
+  // keeps Commons.Color.urgent — a fault and a charge are both red, and the word
   // beside the dot is what tells them apart, the same way it already
   // distinguishes driving from parked.
   readonly property color chargeRed: "#f44336"
@@ -82,7 +83,7 @@ Panel {
   // The coefficients are the usual perceptual weights: green carries most of
   // what the eye reads as brightness.
   readonly property bool lightTheme: {
-    var bg = Color.background
+    var bg = Commons.Color.background
     return (0.2126 * bg.r + 0.7152 * bg.g + 0.0722 * bg.b) > 0.5
   }
 
@@ -784,8 +785,8 @@ Panel {
             // charging are both online, and the word beside the dot already
             // says which. The dot answers one question only: is the car
             // there to be asked.
-            color: root.errorText !== "" ? Color.urgent
-                 : root.asleep ? Color.muted
+            color: root.errorText !== "" ? Commons.Color.urgent
+                 : root.asleep ? Commons.Color.muted
                  : root.carState === "" ? root.foreground
                  : root.charging ? root.chargeRed
                  : root.liveGreen
@@ -1115,7 +1116,7 @@ Panel {
         wrapMode: Text.WordWrap
         font.family: root.fontFamily
         font.pixelSize: Style.font.bodySmall
-        color: Color.urgent
+        color: Commons.Color.urgent
       }
 
       PanelSeparator { width: parent.width }
